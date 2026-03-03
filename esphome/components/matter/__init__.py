@@ -14,6 +14,7 @@ from esphome.components.esp32 import (
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 from esphome.core import CORE, coroutine_with_priority
+from esphome.helpers import write_file_if_changed
 
 CODEOWNERS = ["@nikhiljha"]
 
@@ -123,6 +124,14 @@ async def to_code(config):
 
     cg.add_define("USE_MATTER")
 
+    # connectedhomeip headers require CHIP_HAVE_CONFIG_H to properly include
+    # platform build config (SystemBuildConfig.h, CHIPDeviceBuildConfig.h).
+    # Without this, CHIP_SYSTEM_CONFIG_USE_SOCKETS etc. aren't set, causing
+    # override errors in SystemLayerImplSelect.h and other headers.
+    # The connectedhomeip CMake normally sets this for dependent components,
+    # but PlatformIO doesn't propagate it to the src component.
+    cg.add_build_flag("-DCHIP_HAVE_CONFIG_H=1")
+
     # Set Matter configuration
     cg.add(var.set_discriminator(config[CONF_DISCRIMINATOR]))
     cg.add(var.set_passcode(config[CONF_PASSCODE]))
@@ -137,6 +146,41 @@ async def to_code(config):
         name="espressif/esp_matter",
         ref="1.4.0",
     )
+
+    # Write the top-level CMakeLists.txt with EXECUTABLE_COMPONENT_NAME=src
+    # BEFORE PlatformIO gets a chance to generate its default one.
+    # PlatformIO's create_default_project_files() only writes CMakeLists.txt
+    # if it doesn't already exist, so by writing it here during ESPHome's
+    # code generation phase, we ensure our version is used.
+    # This is needed because esp_matter's CMakeLists.txt expects
+    # EXECUTABLE_COMPONENT_NAME to be set (defaults to "main" which doesn't
+    # exist in ESPHome's build structure - ESPHome uses "src").
+    cmake_path = CORE.relative_build_path("CMakeLists.txt")
+    cmake_content = (
+        f'cmake_minimum_required(VERSION 3.16.0)\n'
+        f'set(EXECUTABLE_COMPONENT_NAME "src")\n'
+        f'include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)\n'
+        f'project({CORE.name})\n'
+    )
+    write_file_if_changed(cmake_path, cmake_content)
+
+    # Write a custom src/CMakeLists.txt that declares dependency on esp_matter.
+    # PlatformIO's default src/CMakeLists.txt uses a bare idf_component_register()
+    # without REQUIRES, which means the src component doesn't get the compile
+    # definitions from esp_matter/connectedhomeip (like CHIP_HAVE_CONFIG_H).
+    # This causes connectedhomeip headers to compile with wrong preprocessor
+    # state, leading to override errors in SystemLayerImplSelect.h etc.
+    # PlatformIO only writes src/CMakeLists.txt if it doesn't already exist,
+    # so pre-writing it here ensures our version with REQUIRES is used.
+    src_cmake_path = CORE.relative_src_path("CMakeLists.txt")
+    src_cmake_content = (
+        f'FILE(GLOB_RECURSE app_sources ${{CMAKE_SOURCE_DIR}}/src/*.*)\n'
+        f'idf_component_register(\n'
+        f'    SRCS ${{app_sources}}\n'
+        f'    PRIV_REQUIRES espressif__esp_matter\n'
+        f')\n'
+    )
+    write_file_if_changed(src_cmake_path, src_cmake_content)
 
     # Set required sdkconfig options
     _set_matter_sdkconfig(config)

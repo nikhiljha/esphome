@@ -14,6 +14,7 @@
 #include <app/server/Server.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <platform/CommissionableDataProvider.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/ESP32/route_hook/ESP32RouteHook.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
@@ -88,8 +89,9 @@ void MatterComponent::setup() {
   // Configure discriminator and passcode in the Matter stack.
   // These must be set after esp_matter::start() since the stack initializes
   // ConfigurationMgr during start.
-  chip::DeviceLayer::ConfigurationMgr().StoreSetupDiscriminator(this->discriminator_);
-  chip::DeviceLayer::ConfigurationMgr().StoreSetupPinCode(this->passcode_);
+  // Configure discriminator and passcode via the CommissionableDataProvider
+  chip::DeviceLayer::GetCommissionableDataProvider()->SetSetupDiscriminator(this->discriminator_);
+  chip::DeviceLayer::GetCommissionableDataProvider()->SetSetupPasscode(this->passcode_);
 
   // Generate and log the QR code setup payload for pairing
   this->log_qr_code_();
@@ -247,7 +249,7 @@ void MatterComponent::create_endpoints_() {
 uint16_t MatterComponent::create_fan_endpoint_(const std::string &name) {
   esp_matter::endpoint::fan::config_t fan_config;
   esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::fan::create(this->node_, &fan_config, ENDPOINT_FLAG_NONE, nullptr);
+      esp_matter::endpoint::fan::create(this->node_, &fan_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create fan endpoint for '%s'", name.c_str());
     return 0;
@@ -260,7 +262,7 @@ uint16_t MatterComponent::create_fan_endpoint_(const std::string &name) {
 uint16_t MatterComponent::create_on_off_endpoint_(const std::string &name) {
   esp_matter::endpoint::on_off_plugin_unit::config_t on_off_config;
   esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::on_off_plugin_unit::create(this->node_, &on_off_config, ENDPOINT_FLAG_NONE, nullptr);
+      esp_matter::endpoint::on_off_plugin_unit::create(this->node_, &on_off_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create on/off endpoint for '%s'", name.c_str());
     return 0;
@@ -273,7 +275,7 @@ uint16_t MatterComponent::create_on_off_endpoint_(const std::string &name) {
 uint16_t MatterComponent::create_contact_sensor_endpoint_(const std::string &name) {
   esp_matter::endpoint::contact_sensor::config_t contact_config;
   esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::contact_sensor::create(this->node_, &contact_config, ENDPOINT_FLAG_NONE, nullptr);
+      esp_matter::endpoint::contact_sensor::create(this->node_, &contact_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create contact sensor endpoint for '%s'", name.c_str());
     return 0;
@@ -286,7 +288,7 @@ uint16_t MatterComponent::create_contact_sensor_endpoint_(const std::string &nam
 uint16_t MatterComponent::create_temperature_sensor_endpoint_(const std::string &name) {
   esp_matter::endpoint::temperature_sensor::config_t temp_config;
   esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::temperature_sensor::create(this->node_, &temp_config, ENDPOINT_FLAG_NONE, nullptr);
+      esp_matter::endpoint::temperature_sensor::create(this->node_, &temp_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create temperature sensor endpoint for '%s'", name.c_str());
     return 0;
@@ -299,7 +301,7 @@ uint16_t MatterComponent::create_temperature_sensor_endpoint_(const std::string 
 uint16_t MatterComponent::create_humidity_sensor_endpoint_(const std::string &name) {
   esp_matter::endpoint::humidity_sensor::config_t humidity_config;
   esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::humidity_sensor::create(this->node_, &humidity_config, ENDPOINT_FLAG_NONE, nullptr);
+      esp_matter::endpoint::humidity_sensor::create(this->node_, &humidity_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create humidity sensor endpoint for '%s'", name.c_str());
     return 0;
@@ -420,7 +422,7 @@ esp_err_t MatterComponent::attribute_update_cb_(esp_matter::attribute::callback_
   if (global_matter == nullptr)
     return ESP_OK;
 
-  if (type == PRE_UPDATE) {
+  if (type == esp_matter::attribute::PRE_UPDATE) {
     return global_matter->handle_attribute_update_(endpoint_id, cluster_id, attribute_id, val);
   }
   return ESP_OK;
