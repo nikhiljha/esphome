@@ -14,15 +14,20 @@
 #include <app/server/Server.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/ESP32/route_hook/ESP32RouteHook.h>
+#include <setup_payload/QRCodeSetupPayloadGenerator.h>
+#include <setup_payload/SetupPayload.h>
 
 #include <nvs_flash.h>
 
 static const char *const TAG = "matter";
 
-using namespace esp_matter;
-using namespace esp_matter::attribute;
-using namespace esp_matter::endpoint;
+// We intentionally do NOT use `using namespace esp_matter::endpoint;` because
+// it brings in names like `fan`, `contact_sensor`, `temperature_sensor` that
+// collide with ESPHome's own namespaces (esphome::fan, esphome::sensor, etc.).
+// Instead, we fully qualify all esp_matter calls.
+
 using namespace chip::app::Clusters;
 
 namespace esphome::matter {
@@ -54,8 +59,8 @@ void MatterComponent::setup() {
   }
 
   // Create the Matter node (root node on endpoint 0)
-  node::config_t node_config;
-  this->node_ = node::create(&node_config, attribute_update_cb_, identification_cb_);
+  esp_matter::node::config_t node_config;
+  this->node_ = esp_matter::node::create(&node_config, attribute_update_cb_, identification_cb_);
   if (this->node_ == nullptr) {
     ESP_LOGE(TAG, "Failed to create Matter node");
     this->mark_failed();
@@ -80,16 +85,50 @@ void MatterComponent::setup() {
 
   this->matter_started_ = true;
 
+  // Configure discriminator and passcode in the Matter stack.
+  // These must be set after esp_matter::start() since the stack initializes
+  // ConfigurationMgr during start.
+  chip::DeviceLayer::ConfigurationMgr().StoreSetupDiscriminator(this->discriminator_);
+  chip::DeviceLayer::ConfigurationMgr().StoreSetupPinCode(this->passcode_);
+
+  // Generate and log the QR code setup payload for pairing
+  this->log_qr_code_();
+
   // Initialize OTA requestor
   err = esp_matter_ota_requestor_init();
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "OTA requestor init failed: %s (non-fatal)", esp_err_to_name(err));
   }
 
-  // Log the QR code setup payload for pairing
   ESP_LOGI(TAG, "Matter started successfully");
-  ESP_LOGI(TAG, "Setup discriminator: %u, passcode: %" PRIu32, this->discriminator_, this->passcode_);
-  ESP_LOGI(TAG, "Commission the device using your Matter controller (e.g., Apple Home, Google Home, Home Assistant)");
+}
+
+void MatterComponent::log_qr_code_() {
+  // Build a Matter setup payload and generate the QR code string
+  chip::SetupPayload payload;
+  payload.version = 0;
+  payload.vendorID = this->vendor_id_;
+  payload.productID = this->product_id_;
+  payload.commissioningFlow = chip::CommissioningFlow::kStandard;
+  payload.discriminator.SetLongValue(this->discriminator_);
+  payload.setUpPINCode = this->passcode_;
+  // BLE for commissioning discovery
+  payload.rendezvousInformation.SetValue(chip::RendezvousInformationFlag::kBLE);
+
+  // Generate QR code data string (starts with "MT:")
+  chip::QRCodeSetupPayloadGenerator qr_generator(payload);
+  std::string qr_code;
+  CHIP_ERROR chip_err = qr_generator.payloadBase38Representation(qr_code);
+  if (chip_err == CHIP_NO_ERROR) {
+    ESP_LOGI(TAG, "====================================");
+    ESP_LOGI(TAG, "Matter QR Code: %s", qr_code.c_str());
+    ESP_LOGI(TAG, "Manual pairing code: discriminator=%u, passcode=%" PRIu32, this->discriminator_, this->passcode_);
+    ESP_LOGI(TAG, "====================================");
+    ESP_LOGI(TAG, "Scan the QR code with your Matter controller app (Apple Home, Google Home, etc.)");
+  } else {
+    ESP_LOGW(TAG, "Failed to generate QR code payload");
+    ESP_LOGI(TAG, "Manual pairing: discriminator=%u, passcode=%" PRIu32, this->discriminator_, this->passcode_);
+  }
 }
 
 void MatterComponent::loop() {
@@ -181,20 +220,18 @@ void MatterComponent::create_endpoints_() {
   for (auto *sensor_entity : App.get_sensors()) {
     if (sensor_entity->is_internal())
       continue;
-    const char *device_class = "";
-    if (sensor_entity->get_device_class() != nullptr) {
-      device_class = sensor_entity->get_device_class();
-    }
+    // Use get_device_class_ref() to avoid deprecated API and string copies
+    auto device_class_ref = sensor_entity->get_device_class_ref();
 
     uint16_t ep_id = 0;
-    if (strcmp(device_class, "temperature") == 0) {
+    if (device_class_ref == "temperature") {
       ep_id = this->create_temperature_sensor_endpoint_(sensor_entity->get_name().c_str());
-    } else if (strcmp(device_class, "humidity") == 0) {
+    } else if (device_class_ref == "humidity") {
       ep_id = this->create_humidity_sensor_endpoint_(sensor_entity->get_name().c_str());
     } else {
       // Skip sensors without a mappable device class
-      ESP_LOGD(TAG, "Skipping sensor '%s' (device_class='%s', no Matter mapping)",
-               sensor_entity->get_name().c_str(), device_class);
+      ESP_LOGD(TAG, "Skipping sensor '%s' (no Matter mapping for device_class)",
+               sensor_entity->get_name().c_str());
       continue;
     }
 
@@ -208,61 +245,66 @@ void MatterComponent::create_endpoints_() {
 }
 
 uint16_t MatterComponent::create_fan_endpoint_(const std::string &name) {
-  fan::config_t fan_config;
-  endpoint_t *ep = fan::create(this->node_, &fan_config, ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint::fan::config_t fan_config;
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::fan::create(this->node_, &fan_config, ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create fan endpoint for '%s'", name.c_str());
     return 0;
   }
-  uint16_t ep_id = endpoint::get_id(ep);
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
   this->endpoint_types_[ep_id] = EndpointType::FAN;
   return ep_id;
 }
 
 uint16_t MatterComponent::create_on_off_endpoint_(const std::string &name) {
-  on_off_plugin_unit::config_t on_off_config;
-  endpoint_t *ep = on_off_plugin_unit::create(this->node_, &on_off_config, ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint::on_off_plugin_unit::config_t on_off_config;
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::on_off_plugin_unit::create(this->node_, &on_off_config, ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create on/off endpoint for '%s'", name.c_str());
     return 0;
   }
-  uint16_t ep_id = endpoint::get_id(ep);
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
   this->endpoint_types_[ep_id] = EndpointType::ON_OFF;
   return ep_id;
 }
 
 uint16_t MatterComponent::create_contact_sensor_endpoint_(const std::string &name) {
-  contact_sensor::config_t contact_config;
-  endpoint_t *ep = contact_sensor::create(this->node_, &contact_config, ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint::contact_sensor::config_t contact_config;
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::contact_sensor::create(this->node_, &contact_config, ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create contact sensor endpoint for '%s'", name.c_str());
     return 0;
   }
-  uint16_t ep_id = endpoint::get_id(ep);
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
   this->endpoint_types_[ep_id] = EndpointType::CONTACT_SENSOR;
   return ep_id;
 }
 
 uint16_t MatterComponent::create_temperature_sensor_endpoint_(const std::string &name) {
-  temperature_sensor::config_t temp_config;
-  endpoint_t *ep = temperature_sensor::create(this->node_, &temp_config, ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint::temperature_sensor::config_t temp_config;
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::temperature_sensor::create(this->node_, &temp_config, ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create temperature sensor endpoint for '%s'", name.c_str());
     return 0;
   }
-  uint16_t ep_id = endpoint::get_id(ep);
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
   this->endpoint_types_[ep_id] = EndpointType::TEMPERATURE_SENSOR;
   return ep_id;
 }
 
 uint16_t MatterComponent::create_humidity_sensor_endpoint_(const std::string &name) {
-  humidity_sensor::config_t humidity_config;
-  endpoint_t *ep = humidity_sensor::create(this->node_, &humidity_config, ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint::humidity_sensor::config_t humidity_config;
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::humidity_sensor::create(this->node_, &humidity_config, ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create humidity sensor endpoint for '%s'", name.c_str());
     return 0;
   }
-  uint16_t ep_id = endpoint::get_id(ep);
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
   this->endpoint_types_[ep_id] = EndpointType::HUMIDITY_SENSOR;
   return ep_id;
 }
@@ -278,7 +320,7 @@ void MatterComponent::on_fan_update(fan::Fan *obj) {
 
   // Update OnOff cluster
   esp_matter_attr_val_t on_off_val = esp_matter_bool(obj->state);
-  attribute::update(ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &on_off_val);
+  esp_matter::attribute::update(ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &on_off_val);
 
   // Update FanControl cluster - PercentSetting
   // ESPHome fan speed is 0-100 (matching the speed_count), map to Matter 0-100
@@ -289,7 +331,7 @@ void MatterComponent::on_fan_update(fan::Fan *obj) {
       percent = static_cast<uint8_t>((obj->speed * 100) / speed_count);
     }
     esp_matter_attr_val_t speed_val = esp_matter_nullable_uint8(percent);
-    attribute::update(ep_id, FanControl::Id, FanControl::Attributes::PercentSetting::Id, &speed_val);
+    esp_matter::attribute::update(ep_id, FanControl::Id, FanControl::Attributes::PercentSetting::Id, &speed_val);
   }
 }
 #endif
@@ -302,7 +344,7 @@ void MatterComponent::on_switch_update(switch_::Switch *obj) {
   uint16_t ep_id = it->second;
 
   esp_matter_attr_val_t val = esp_matter_bool(obj->state);
-  attribute::update(ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
+  esp_matter::attribute::update(ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
 }
 #endif
 
@@ -315,7 +357,7 @@ void MatterComponent::on_binary_sensor_update(binary_sensor::BinarySensor *obj) 
 
   // BooleanState cluster: StateValue attribute
   esp_matter_attr_val_t val = esp_matter_bool(obj->state);
-  attribute::update(ep_id, BooleanState::Id, BooleanState::Attributes::StateValue::Id, &val);
+  esp_matter::attribute::update(ep_id, BooleanState::Id, BooleanState::Attributes::StateValue::Id, &val);
 }
 #endif
 
@@ -338,16 +380,16 @@ void MatterComponent::on_sensor_update(sensor::Sensor *obj) {
       // Matter uses temperature in 0.01 degrees Celsius
       int16_t temp_val = static_cast<int16_t>(obj->state * 100);
       esp_matter_attr_val_t val = esp_matter_nullable_int16(temp_val);
-      attribute::update(ep_id, TemperatureMeasurement::Id,
-                        TemperatureMeasurement::Attributes::MeasuredValue::Id, &val);
+      esp_matter::attribute::update(ep_id, TemperatureMeasurement::Id,
+                                    TemperatureMeasurement::Attributes::MeasuredValue::Id, &val);
       break;
     }
     case EndpointType::HUMIDITY_SENSOR: {
       // Matter uses humidity in 0.01 percent
       uint16_t humidity_val = static_cast<uint16_t>(obj->state * 100);
       esp_matter_attr_val_t val = esp_matter_nullable_uint16(humidity_val);
-      attribute::update(ep_id, RelativeHumidityMeasurement::Id,
-                        RelativeHumidityMeasurement::Attributes::MeasuredValue::Id, &val);
+      esp_matter::attribute::update(ep_id, RelativeHumidityMeasurement::Id,
+                                    RelativeHumidityMeasurement::Attributes::MeasuredValue::Id, &val);
       break;
     }
     default:
@@ -372,7 +414,7 @@ void MatterComponent::on_number_update(number::Number *obj) {
 
 // ---- Matter SDK callbacks ----
 
-esp_err_t MatterComponent::attribute_update_cb_(attribute::callback_type_t type, uint16_t endpoint_id,
+esp_err_t MatterComponent::attribute_update_cb_(esp_matter::attribute::callback_type_t type, uint16_t endpoint_id,
                                                 uint32_t cluster_id, uint32_t attribute_id,
                                                 esp_matter_attr_val_t *val, void *priv_data) {
   if (global_matter == nullptr)
@@ -384,7 +426,7 @@ esp_err_t MatterComponent::attribute_update_cb_(attribute::callback_type_t type,
   return ESP_OK;
 }
 
-esp_err_t MatterComponent::identification_cb_(identification::callback_type_t type, uint16_t endpoint_id,
+esp_err_t MatterComponent::identification_cb_(esp_matter::identification::callback_type_t type, uint16_t endpoint_id,
                                               uint8_t effect_id, uint8_t effect_variant, void *priv_data) {
   ESP_LOGI(TAG, "Identify callback: type=%u, endpoint=%u, effect=%u", type, endpoint_id, effect_id);
   return ESP_OK;

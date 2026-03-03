@@ -77,6 +77,9 @@ class MatterComponent : public Component, public Controller {
   esp_err_t handle_attribute_update_(uint16_t endpoint_id, uint32_t cluster_id,
                                      uint32_t attribute_id, esp_matter_attr_val_t *val);
 
+  /// Generate and log the Matter QR code setup payload
+  void log_qr_code_();
+
   // ---- Entity-to-endpoint mapping ----
   // Maps ESPHome entity pointers to Matter endpoint IDs
   std::map<void *, uint16_t> entity_endpoint_map_;
