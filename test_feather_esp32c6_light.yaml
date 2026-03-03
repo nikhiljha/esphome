@@ -12,8 +12,8 @@ esp32:
 logger:
 
 wifi:
-  ssid: "placeholder"
-  password: "placeholder"
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
 
 matter:
   discriminator: 3842
