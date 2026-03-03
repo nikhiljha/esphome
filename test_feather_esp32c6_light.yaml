@@ -1,0 +1,29 @@
+esphome:
+  name: feather-matter-light
+  friendly_name: "Feather Matter Light"
+
+esp32:
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    platform_version: https://github.com/pioarduino/platform-espressif32/releases/download/54.03.20/platform-espressif32.zip
+    version: 5.4.1
+
+logger:
+
+wifi:
+  ssid: "placeholder"
+  password: "placeholder"
+
+matter:
+  discriminator: 3842
+  passcode: 20202023
+  vendor_id: 0xFFF1
+  product_id: 0x8002
+  product_name: "Feather Matter Light"
+
+# Red LED on the Adafruit Feather ESP32-C6 is on GPIO15
+switch:
+  - platform: gpio
+    name: "LED"
+    pin: GPIO15

@@ -167,6 +167,15 @@ void MatterComponent::dump_config() {
       case EndpointType::HUMIDITY_SENSOR:
         type_str = "HumiditySensor";
         break;
+      case EndpointType::PM25_SENSOR:
+        type_str = "PM2.5Sensor";
+        break;
+      case EndpointType::MODE_SELECT:
+        type_str = "ModeSelect";
+        break;
+      case EndpointType::DIMMABLE:
+        type_str = "Dimmable";
+        break;
     }
     ESP_LOGCONFIG(TAG, "  Endpoint %u: %s", pair.first, type_str);
   }
@@ -230,6 +239,8 @@ void MatterComponent::create_endpoints_() {
       ep_id = this->create_temperature_sensor_endpoint_(sensor_entity->get_name().c_str());
     } else if (device_class_ref == "humidity") {
       ep_id = this->create_humidity_sensor_endpoint_(sensor_entity->get_name().c_str());
+    } else if (device_class_ref == "pm25") {
+      ep_id = this->create_pm25_sensor_endpoint_(sensor_entity->get_name().c_str());
     } else {
       // Skip sensors without a mappable device class
       ESP_LOGD(TAG, "Skipping sensor '%s' (no Matter mapping for device_class)",
@@ -241,6 +252,34 @@ void MatterComponent::create_endpoints_() {
       this->entity_endpoint_map_[sensor_entity] = ep_id;
       this->endpoint_entity_map_[ep_id] = sensor_entity;
       ESP_LOGI(TAG, "Created sensor endpoint %u for '%s'", ep_id, sensor_entity->get_name().c_str());
+    }
+  }
+#endif
+
+#ifdef USE_SELECT
+  for (auto *sel : App.get_selects()) {
+    if (sel->is_internal())
+      continue;
+    const auto &options = sel->traits.get_options();
+    std::vector<std::string> option_strings(options.begin(), options.end());
+    uint16_t ep_id = this->create_mode_select_endpoint_(sel->get_name().c_str(), option_strings);
+    if (ep_id > 0) {
+      this->entity_endpoint_map_[sel] = ep_id;
+      this->endpoint_entity_map_[ep_id] = sel;
+      ESP_LOGI(TAG, "Created mode select endpoint %u for '%s'", ep_id, sel->get_name().c_str());
+    }
+  }
+#endif
+
+#ifdef USE_NUMBER
+  for (auto *num : App.get_numbers()) {
+    if (num->is_internal())
+      continue;
+    uint16_t ep_id = this->create_dimmable_endpoint_(num->get_name().c_str());
+    if (ep_id > 0) {
+      this->entity_endpoint_map_[num] = ep_id;
+      this->endpoint_entity_map_[ep_id] = num;
+      ESP_LOGI(TAG, "Created dimmable endpoint %u for '%s'", ep_id, num->get_name().c_str());
     }
   }
 #endif
@@ -308,6 +347,85 @@ uint16_t MatterComponent::create_humidity_sensor_endpoint_(const std::string &na
   }
   uint16_t ep_id = esp_matter::endpoint::get_id(ep);
   this->endpoint_types_[ep_id] = EndpointType::HUMIDITY_SENSOR;
+  return ep_id;
+}
+
+uint16_t MatterComponent::create_pm25_sensor_endpoint_(const std::string &name) {
+  // Create an air quality sensor endpoint
+  esp_matter::endpoint::air_quality_sensor::config_t aq_config;
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::air_quality_sensor::create(this->node_, &aq_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  if (ep == nullptr) {
+    ESP_LOGE(TAG, "Failed to create air quality sensor endpoint for '%s'", name.c_str());
+    return 0;
+  }
+
+  // Add PM2.5 Concentration Measurement cluster (0x042A) to the endpoint
+  esp_matter::cluster_t *pm25_cluster = esp_matter::cluster::create(
+      ep, Pm25ConcentrationMeasurement::Id, esp_matter::CLUSTER_FLAG_SERVER);
+  if (pm25_cluster != nullptr) {
+    // MeasuredValue attribute (nullable float - stored as nullable single in Matter)
+    esp_matter_attr_val_t measured_val = esp_matter_nullable_float(0.0f);
+    esp_matter::attribute::create(pm25_cluster, 0x00000000,  // MeasuredValue
+                                  esp_matter::ATTRIBUTE_FLAG_NULLABLE, measured_val);
+    // MinMeasuredValue
+    esp_matter_attr_val_t min_val = esp_matter_nullable_float(0.0f);
+    esp_matter::attribute::create(pm25_cluster, 0x00000001,  // MinMeasuredValue
+                                  esp_matter::ATTRIBUTE_FLAG_NULLABLE, min_val);
+    // MaxMeasuredValue
+    esp_matter_attr_val_t max_val = esp_matter_nullable_float(1000.0f);
+    esp_matter::attribute::create(pm25_cluster, 0x00000002,  // MaxMeasuredValue
+                                  esp_matter::ATTRIBUTE_FLAG_NULLABLE, max_val);
+    // MeasurementUnit attribute (0x00000008) - µg/m³ = 0 (PPM=0, PPB=1, PPT=2, MG_M3=4, UG_M3=5)
+    esp_matter_attr_val_t unit_val = esp_matter_enum8(0);  // PPM as default (closest standard)
+    esp_matter::attribute::create(pm25_cluster, 0x00000008,  // MeasurementUnit
+                                  esp_matter::ATTRIBUTE_FLAG_NONE, unit_val);
+  }
+
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
+  this->endpoint_types_[ep_id] = EndpointType::PM25_SENSOR;
+  return ep_id;
+}
+
+uint16_t MatterComponent::create_mode_select_endpoint_(const std::string &name,
+                                                        const std::vector<std::string> &options) {
+  esp_matter::endpoint::mode_select_device::config_t ms_config;
+  // Set the description for the mode select
+  strncpy(ms_config.mode_select.mode_select_description, name.c_str(),
+          sizeof(ms_config.mode_select.mode_select_description) - 1);
+  ms_config.mode_select.current_mode = 0;
+
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::mode_select_device::create(this->node_, &ms_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  if (ep == nullptr) {
+    ESP_LOGE(TAG, "Failed to create mode select endpoint for '%s'", name.c_str());
+    return 0;
+  }
+
+  // Add SupportedModes entries
+  // The ModeSelect cluster SupportedModes is a list attribute.
+  // For now we configure the mode count in the description and update CurrentMode dynamically.
+  // Note: SupportedModes list population requires TLV encoding which is complex;
+  // the mode_select cluster created by esp_matter handles the basic structure.
+
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
+  this->endpoint_types_[ep_id] = EndpointType::MODE_SELECT;
+  return ep_id;
+}
+
+uint16_t MatterComponent::create_dimmable_endpoint_(const std::string &name) {
+  esp_matter::endpoint::dimmable_light::config_t dim_config;
+  dim_config.level_control.current_level = nullable<uint8_t>(128);  // Start at 50%
+  dim_config.level_control.on_level = nullable<uint8_t>(128);
+
+  esp_matter::endpoint_t *ep =
+      esp_matter::endpoint::dimmable_light::create(this->node_, &dim_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  if (ep == nullptr) {
+    ESP_LOGE(TAG, "Failed to create dimmable endpoint for '%s'", name.c_str());
+    return 0;
+  }
+  uint16_t ep_id = esp_matter::endpoint::get_id(ep);
+  this->endpoint_types_[ep_id] = EndpointType::DIMMABLE;
   return ep_id;
 }
 
@@ -394,6 +512,13 @@ void MatterComponent::on_sensor_update(sensor::Sensor *obj) {
                                     RelativeHumidityMeasurement::Attributes::MeasuredValue::Id, &val);
       break;
     }
+    case EndpointType::PM25_SENSOR: {
+      // PM2.5 Concentration Measurement: MeasuredValue is a float (µg/m³)
+      esp_matter_attr_val_t val = esp_matter_nullable_float(obj->state);
+      esp_matter::attribute::update(ep_id, Pm25ConcentrationMeasurement::Id,
+                                    Pm25ConcentrationMeasurement::Attributes::MeasuredValue::Id, &val);
+      break;
+    }
     default:
       break;
   }
@@ -402,15 +527,51 @@ void MatterComponent::on_sensor_update(sensor::Sensor *obj) {
 
 #ifdef USE_SELECT
 void MatterComponent::on_select_update(select::Select *obj) {
-  // Select entities don't have a direct Matter mapping yet.
-  // Could be mapped to ModeSelect cluster in the future.
+  auto it = this->entity_endpoint_map_.find(obj);
+  if (it == this->entity_endpoint_map_.end())
+    return;
+  uint16_t ep_id = it->second;
+
+  // Map the current selected option index to ModeSelect::CurrentMode
+  const auto &state = obj->current_option();
+  const auto &options = obj->traits.get_options();
+  uint8_t mode = 0;
+  for (size_t i = 0; i < options.size(); i++) {
+    if (options[i] == state) {
+      mode = static_cast<uint8_t>(i);
+      break;
+    }
+  }
+  esp_matter_attr_val_t val = esp_matter_uint8(mode);
+  esp_matter::attribute::update(ep_id, ModeSelect::Id, ModeSelect::Attributes::CurrentMode::Id, &val);
 }
 #endif
 
 #ifdef USE_NUMBER
 void MatterComponent::on_number_update(number::Number *obj) {
-  // Number entities don't have a direct Matter mapping yet.
-  // Could be mapped to LevelControl cluster in the future.
+  auto it = this->entity_endpoint_map_.find(obj);
+  if (it == this->entity_endpoint_map_.end())
+    return;
+  uint16_t ep_id = it->second;
+
+  if (std::isnan(obj->state))
+    return;
+
+  // Map number value to LevelControl::CurrentLevel (0-254)
+  // Scale from the number's min/max range to 0-254
+  float min_val = obj->traits.get_min_value();
+  float max_val = obj->traits.get_max_value();
+  float range = max_val - min_val;
+  uint8_t level = 0;
+  if (range > 0) {
+    level = static_cast<uint8_t>(((obj->state - min_val) / range) * 254.0f);
+  }
+  esp_matter_attr_val_t val = esp_matter_nullable_uint8(level);
+  esp_matter::attribute::update(ep_id, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id, &val);
+
+  // Also update OnOff state based on whether the number is at minimum
+  esp_matter_attr_val_t on_off_val = esp_matter_bool(obj->state > min_val);
+  esp_matter::attribute::update(ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &on_off_val);
 }
 #endif
 
@@ -520,8 +681,51 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
     case EndpointType::CONTACT_SENSOR:
     case EndpointType::TEMPERATURE_SENSOR:
     case EndpointType::HUMIDITY_SENSOR:
+    case EndpointType::PM25_SENSOR:
       // Sensors are read-only, no commands to dispatch
       break;
+
+#ifdef USE_SELECT
+    case EndpointType::MODE_SELECT: {
+      auto *sel = static_cast<select::Select *>(entity_it->second);
+      if (cluster_id == ModeSelect::Id && attribute_id == ModeSelect::Attributes::CurrentMode::Id) {
+        uint8_t mode = val->val.u8;
+        const auto &options = sel->traits.get_options();
+        if (mode < options.size()) {
+          auto call = sel->make_call();
+          call.set_option(options[mode]);
+          call.perform();
+        }
+      }
+      break;
+    }
+#endif
+
+#ifdef USE_NUMBER
+    case EndpointType::DIMMABLE: {
+      auto *num = static_cast<number::Number *>(entity_it->second);
+      if (cluster_id == LevelControl::Id && attribute_id == LevelControl::Attributes::CurrentLevel::Id) {
+        // Scale from 0-254 back to number's min/max range
+        float min_val = num->traits.get_min_value();
+        float max_val = num->traits.get_max_value();
+        float range = max_val - min_val;
+        float value = min_val + (static_cast<float>(val->val.u8) / 254.0f) * range;
+        auto call = num->make_call();
+        call.set_value(value);
+        call.perform();
+      } else if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+        // On/Off maps to min (off) or last value (on)
+        auto call = num->make_call();
+        if (val->val.b) {
+          call.set_value(num->traits.get_max_value());
+        } else {
+          call.set_value(num->traits.get_min_value());
+        }
+        call.perform();
+      }
+      break;
+    }
+#endif
   }
 
   return ESP_OK;

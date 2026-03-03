@@ -64,6 +64,12 @@ class MatterComponent : public Component, public Controller {
   uint16_t create_temperature_sensor_endpoint_(const std::string &name);
   /// Create a humidity sensor endpoint from an ESPHome humidity sensor
   uint16_t create_humidity_sensor_endpoint_(const std::string &name);
+  /// Create an air quality sensor endpoint with PM2.5 cluster
+  uint16_t create_pm25_sensor_endpoint_(const std::string &name);
+  /// Create a mode select endpoint from an ESPHome select entity
+  uint16_t create_mode_select_endpoint_(const std::string &name, const std::vector<std::string> &options);
+  /// Create a dimmable plugin unit endpoint from an ESPHome number entity
+  uint16_t create_dimmable_endpoint_(const std::string &name);
 
   // ---- Matter SDK callbacks (static, dispatch to instance) ----
   static esp_err_t attribute_update_cb_(esp_matter::attribute::callback_type_t type, uint16_t endpoint_id,
@@ -87,7 +93,16 @@ class MatterComponent : public Component, public Controller {
   std::map<uint16_t, void *> endpoint_entity_map_;
 
   // Track which endpoints are which type for proper command dispatch
-  enum class EndpointType : uint8_t { FAN, ON_OFF, CONTACT_SENSOR, TEMPERATURE_SENSOR, HUMIDITY_SENSOR };
+  enum class EndpointType : uint8_t {
+    FAN,
+    ON_OFF,
+    CONTACT_SENSOR,
+    TEMPERATURE_SENSOR,
+    HUMIDITY_SENSOR,
+    PM25_SENSOR,
+    MODE_SELECT,
+    DIMMABLE,
+  };
   std::map<uint16_t, EndpointType> endpoint_types_;
 
   esp_matter::node_t *node_{nullptr};
