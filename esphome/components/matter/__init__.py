@@ -191,6 +191,13 @@ def _set_matter_sdkconfig(config):
         add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_ENDPOINT_ID", 1)
         # Tell esp_matter to initialize Thread stack during esp_matter::start()
         add_idf_sdkconfig_option("CONFIG_ESP_MATTER_ENABLE_OPENTHREAD", True)
+        # Critical: CHIP_DEVICE_CONFIG_ENABLE_THREAD is derived from this.
+        # Without it, CHIP thinks Thread is disabled and NetworkCommissioning
+        # cluster defaults to WiFi mode (which doesn't exist).
+        add_idf_sdkconfig_option("CONFIG_ENABLE_MATTER_OVER_THREAD", True)
+        # Enable Thread network commissioning driver so CHIP can provision
+        # Thread credentials during Matter commissioning.
+        add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_COMMISSIONING_DRIVER", True)
 
 
 @coroutine_with_priority(40.0)
