@@ -91,24 +91,42 @@ def _set_matter_sdkconfig(config):
     add_idf_sdkconfig_option("CONFIG_CHIP_TASK_STACK_SIZE", 8192)
     add_idf_sdkconfig_option("CONFIG_CHIP_ENABLE_PAIRING_AUTOSTART", True)
 
-    # BLE for commissioning
+    # Verbose CHIP logging to debug commissioning issues
+    # DETAIL level shows PASE, DAC validation, BLE events, and network commissioning steps
+    add_idf_sdkconfig_option("CONFIG_LOG_DEFAULT_LEVEL", 4)  # ESP_LOG_DEBUG
+    add_idf_sdkconfig_option("CONFIG_CHIP_LOG_FILTERING", False)
+    add_idf_sdkconfig_option("CONFIG_MATTER_LOG_LEVEL", 4)  # Detail
+
+    # BLE for commissioning - BLE-only mode frees memory from Classic BT
     add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
     add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ENABLED", True)
+    add_idf_sdkconfig_option("CONFIG_BT_CTRL_MODE_BLE_ONLY", True)
+    add_idf_sdkconfig_option("CONFIG_BT_CTRL_HCI_MODE_VHCI", True)
+    # Larger NimBLE task stack for SPAKE2+ crypto during PASE handshake
+    add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_TASK_STACK_SIZE", 6144)
+    # Allow enough ACL connections for commissioning
+    add_idf_sdkconfig_option("CONFIG_BT_ACL_CONNECTIONS", 3)
 
     # Increase NVS partition for Matter fabric storage
     add_idf_sdkconfig_option("CONFIG_NVS_ENCRYPTION", False)
 
-    # mbedTLS settings required by Matter
+    # mbedTLS settings required by Matter - hardware acceleration is critical
+    # to complete the SPAKE2+/PASE handshake within the controller's timeout
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_HKDF_C", True)
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_ECJPAKE_C", True)
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_HARDWARE_AES", True)
+    add_idf_sdkconfig_option("CONFIG_MBEDTLS_HARDWARE_MPI", True)
+    add_idf_sdkconfig_option("CONFIG_MBEDTLS_HARDWARE_SHA", True)
 
     # Increase main task stack for Matter init
     add_idf_sdkconfig_option("CONFIG_ESP_MAIN_TASK_STACK_SIZE", 8192)
 
-    # LWIP settings for Matter
+    # LWIP settings for Matter - larger buffers for IPv6 multicast during discovery
     add_idf_sdkconfig_option("CONFIG_LWIP_IPV6", True)
     add_idf_sdkconfig_option("CONFIG_LWIP_MULTICAST_PING", True)
+    add_idf_sdkconfig_option("CONFIG_LWIP_TCPIP_RECVMBOX_SIZE", 32)
+    add_idf_sdkconfig_option("CONFIG_LWIP_UDP_RECVMBOX_SIZE", 32)
+    add_idf_sdkconfig_option("CONFIG_LWIP_MAX_SOCKETS", 16)
 
     # Matter OTA requestor
     add_idf_sdkconfig_option("CONFIG_ENABLE_OTA_REQUESTOR", True)

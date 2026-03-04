@@ -16,10 +16,10 @@ wifi:
   password: !secret wifi_password
 
 matter:
-  discriminator: 3842
-  passcode: 20202023
+  discriminator: 3840
+  passcode: 20202021
   vendor_id: 0xFFF1
-  product_id: 0x8002
+  product_id: 0x8000
   product_name: "Feather Matter Light"
 
 # Red LED on the Adafruit Feather ESP32-C6 is on GPIO15
