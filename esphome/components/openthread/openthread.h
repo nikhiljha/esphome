@@ -2,12 +2,14 @@
 #include "esphome/core/defines.h"
 #ifdef USE_OPENTHREAD
 
-#include "esphome/components/mdns/mdns_component.h"
 #include "esphome/components/network/ip_address.h"
 #include "esphome/core/component.h"
 
+#ifndef USE_OPENTHREAD_MATTER_MANAGED
+#include "esphome/components/mdns/mdns_component.h"
 #include <openthread/srp_client.h>
 #include <openthread/srp_client_buffers.h>
+#endif
 #include <openthread/thread.h>
 
 #include <optional>
@@ -58,6 +60,9 @@ class OpenThreadComponent : public Component {
 
 extern OpenThreadComponent *global_openthread_component;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
+// SRP component is only used in static dataset mode.
+// In Matter-managed mode, CHIP handles SRP service registration via DNS-SD.
+#ifndef USE_OPENTHREAD_MATTER_MANAGED
 class OpenThreadSrpComponent : public Component {
  public:
   void set_mdns(esphome::mdns::MDNSComponent *mdns);
@@ -76,6 +81,7 @@ class OpenThreadSrpComponent : public Component {
   std::vector<std::unique_ptr<uint8_t[]>> memory_pool_;
   void *pool_alloc_(size_t size);
 };
+#endif  // !USE_OPENTHREAD_MATTER_MANAGED
 
 class InstanceLock {
  public:

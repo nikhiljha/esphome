@@ -1,3 +1,4 @@
+CONF_DATASET_SOURCE = "dataset_source"
 CONF_DEVICE_TYPE = "device_type"
 CONF_EXT_PAN_ID = "ext_pan_id"
 CONF_FORCE_DATASET = "force_dataset"

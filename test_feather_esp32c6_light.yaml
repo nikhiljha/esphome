@@ -11,10 +11,13 @@ esp32:
 
 logger:
 
-# No wifi: or openthread: needed — Matter handles Thread commissioning
-# automatically. The phone provisions Thread credentials during BLE setup.
+# Thread mode: openthread component with dataset_source: matter lets CHIP
+# provision Thread credentials during BLE commissioning (like a store-bought device).
 network:
   enable_ipv6: true
+
+openthread:
+  dataset_source: matter
 
 matter:
   discriminator: 3840

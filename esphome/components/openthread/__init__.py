@@ -23,6 +23,7 @@ import esphome.final_validate as fv
 from esphome.types import ConfigType
 
 from .const import (
+    CONF_DATASET_SOURCE,
     CONF_DEVICE_TYPE,
     CONF_EXT_PAN_ID,
     CONF_FORCE_DATASET,
@@ -156,6 +157,37 @@ def _validate(config: ConfigType) -> ConfigType:
     return config
 
 
+def _validate_dataset_source(config: ConfigType) -> ConfigType:
+    """Validate that static mode has dataset credentials, matter mode does not need them."""
+    dataset_source = config.get(CONF_DATASET_SOURCE, "static")
+    if dataset_source == "static":
+        if CONF_NETWORK_KEY not in config and CONF_TLV not in config:
+            raise cv.Invalid(
+                "Must specify either 'network_key' or 'tlv' when dataset_source is 'static'. "
+                "Use 'dataset_source: matter' if Thread credentials will be provisioned "
+                "during Matter commissioning."
+            )
+        if CONF_NETWORK_KEY in config and CONF_TLV in config:
+            raise cv.Invalid(
+                "Cannot specify both 'network_key' and 'tlv'. Use exactly one."
+            )
+    elif dataset_source == "matter":
+        if "matter" not in CORE.loaded_integrations:
+            raise cv.Invalid(
+                "dataset_source 'matter' requires the 'matter:' component to be configured."
+            )
+        # Static dataset options are not used in matter mode
+        for key in (CONF_NETWORK_KEY, CONF_TLV, CONF_PAN_ID, CONF_CHANNEL,
+                    CONF_NETWORK_NAME, CONF_EXT_PAN_ID, CONF_PSKC,
+                    CONF_MESH_LOCAL_PREFIX, CONF_FORCE_DATASET):
+            if key in config:
+                raise cv.Invalid(
+                    f"'{key}' cannot be used with dataset_source: matter. "
+                    f"Thread credentials are provisioned during Matter commissioning."
+                )
+    return config
+
+
 def _require_vfs_select(config):
     """Register VFS select requirement during config validation."""
     # OpenThread uses esp_vfs_eventfd which requires VFS select support
@@ -167,8 +199,11 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(OpenThreadComponent),
-            cv.GenerateID(CONF_SRP_ID): cv.declare_id(OpenThreadSrpComponent),
-            cv.GenerateID(CONF_MDNS_ID): cv.use_id(MDNSComponent),
+            cv.Optional(CONF_SRP_ID): cv.declare_id(OpenThreadSrpComponent),
+            cv.Optional(CONF_MDNS_ID): cv.use_id(MDNSComponent),
+            cv.Optional(CONF_DATASET_SOURCE, default="static"): cv.one_of(
+                "static", "matter", lower=True
+            ),
             cv.Optional(CONF_DEVICE_TYPE, default="FTD"): cv.one_of(
                 *CONF_DEVICE_TYPES, upper=True
             ),
@@ -182,7 +217,7 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ).extend(_CONNECTION_SCHEMA),
-    cv.has_exactly_one_key(CONF_NETWORK_KEY, CONF_TLV),
+    _validate_dataset_source,
     only_on_variant(supported=[VARIANT_ESP32C5, VARIANT_ESP32C6, VARIANT_ESP32H2]),
     _validate,
     _require_vfs_select,
@@ -208,8 +243,21 @@ async def to_code(config):
 
     cg.add_define("USE_OPENTHREAD")
 
-    # OpenThread SRP needs access to mDNS services after setup
-    enable_mdns_storage()
+    is_matter_managed = config.get(CONF_DATASET_SOURCE) == "matter"
+
+    if is_matter_managed:
+        # In Matter-managed mode, the CHIP/Matter stack handles:
+        # - OpenThread initialization (esp_openthread_init)
+        # - Thread mainloop (esp_openthread_launch_mainloop)
+        # - Thread credential provisioning (via BLE commissioning)
+        # - SRP service registration (via CHIP's DNS-SD)
+        # The openthread component only provides platform-level setup
+        # (sdkconfig options, variant validation) and the C++ side
+        # just calls set_openthread_platform_config() for CHIP to use.
+        cg.add_define("USE_OPENTHREAD_MATTER_MANAGED")
+    else:
+        # Static mode: OpenThread SRP needs access to mDNS services after setup
+        enable_mdns_storage()
 
     ot = cg.new_Pvariable(config[CONF_ID])
     cg.add(ot.set_use_address(config[CONF_USE_ADDRESS]))
@@ -217,10 +265,13 @@ async def to_code(config):
     if (poll_period := config.get(CONF_POLL_PERIOD)) is not None:
         cg.add(ot.set_poll_period(poll_period))
 
-    srp = cg.new_Pvariable(config[CONF_SRP_ID])
-    mdns_component = await cg.get_variable(config[CONF_MDNS_ID])
-    cg.add(srp.set_mdns(mdns_component))
-    await cg.register_component(srp, config)
+    if not is_matter_managed:
+        # SRP component only needed in static mode — CHIP handles SRP in Matter mode
+        if CONF_SRP_ID in config and CONF_MDNS_ID in config:
+            srp = cg.new_Pvariable(config[CONF_SRP_ID])
+            mdns_component = await cg.get_variable(config[CONF_MDNS_ID])
+            cg.add(srp.set_mdns(mdns_component))
+            await cg.register_component(srp, config)
 
     if (output_power := config.get(CONF_OUTPUT_POWER)) is not None:
         cg.add(ot.set_output_power(output_power))

@@ -11,14 +11,12 @@ from esphome.components.esp32 import (
     VARIANT_ESP32S3,
     add_idf_component,
     add_idf_sdkconfig_option,
-    get_esp32_variant,
-    include_builtin_idf_component,
     only_on_variant,
-    require_vfs_select,
 )
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 from esphome.core import CORE, coroutine_with_priority
+import esphome.final_validate as fv
 from esphome.helpers import write_file_if_changed
 
 CODEOWNERS = ["@nikhiljha"]
@@ -27,6 +25,9 @@ CODEOWNERS = ["@nikhiljha"]
 CONFLICTS_WITH = ["api"]
 DEPENDENCIES = ["esp32"]
 AUTO_LOAD = ["network"]
+
+# WiFi conflicts with openthread, so we can't unconditionally depend on it.
+# Thread mode is validated in FINAL_VALIDATE_SCHEMA instead.
 
 CONF_DISCRIMINATOR = "discriminator"
 CONF_PASSCODE = "passcode"
@@ -93,24 +94,6 @@ def _validate_passcode(value):
     return value
 
 
-# Variants with 802.15.4 radio that support Thread
-_THREAD_VARIANTS = {VARIANT_ESP32C5, VARIANT_ESP32C6, VARIANT_ESP32H2}
-
-
-def _validate_matter_config(config):
-    """Validate that Thread mode is only used on variants with 802.15.4 radio."""
-    if "wifi" not in CORE.loaded_integrations:
-        variant = get_esp32_variant()
-        if variant not in _THREAD_VARIANTS:
-            raise cv.Invalid(
-                f"Matter over Thread requires an ESP32 variant with 802.15.4 radio "
-                f"(ESP32-C5, ESP32-C6, or ESP32-H2), but this device uses {variant}. "
-                f"Either add a 'wifi:' section for Matter over WiFi, or use a "
-                f"Thread-capable variant."
-            )
-    return config
-
-
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -135,8 +118,30 @@ CONFIG_SCHEMA = cv.All(
             VARIANT_ESP32S3,
         ]
     ),
-    _validate_matter_config,
 )
+
+
+def _final_validate(_):
+    """Validate that Thread mode has openthread configured with dataset_source: matter."""
+    full_config = fv.full_config.get()
+    if "wifi" not in full_config:
+        # Thread mode: require the openthread component with dataset_source: matter
+        if "openthread" not in full_config:
+            raise cv.Invalid(
+                "Matter over Thread requires the 'openthread' component. "
+                "Add 'openthread:\n  dataset_source: matter' to your configuration. "
+                "Alternatively, add a 'wifi:' section for Matter over WiFi."
+            )
+        ot_config = full_config.get("openthread", {})
+        if ot_config.get("dataset_source", "static") != "matter":
+            raise cv.Invalid(
+                "When using Matter over Thread, the openthread component must use "
+                "'dataset_source: matter' so that Thread credentials are provisioned "
+                "during Matter BLE commissioning."
+            )
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
 
 
 def _set_matter_sdkconfig(config):
@@ -144,7 +149,6 @@ def _set_matter_sdkconfig(config):
     # Core Matter/CHIP config
     add_idf_sdkconfig_option("CONFIG_CHIP_TASK_STACK_SIZE", 8192)
     add_idf_sdkconfig_option("CONFIG_CHIP_ENABLE_PAIRING_AUTOSTART", True)
-
 
     # BLE for commissioning - BLE-only mode frees memory from Classic BT
     add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
@@ -177,21 +181,11 @@ def _set_matter_sdkconfig(config):
     add_idf_sdkconfig_option("CONFIG_LWIP_UDP_RECVMBOX_SIZE", 32)
     add_idf_sdkconfig_option("CONFIG_LWIP_MAX_SOCKETS", 16)
 
-    # If WiFi is not loaded, enable OpenThread for Matter over Thread.
-    # The Matter/CHIP stack handles Thread initialization and credential
-    # provisioning during commissioning — no pre-configured Thread dataset needed.
-    if "wifi" not in CORE.loaded_integrations:
-        # OpenThread radio and stack
-        add_idf_sdkconfig_option("CONFIG_IEEE802154_ENABLED", True)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_ENABLED", True)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_FTD", True)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_RADIO_NATIVE", True)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_CLI", False)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_CONSOLE_ENABLE", False)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_DIAG", False)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_DNS64_CLIENT", True)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_SRP_CLIENT", True)
-        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_SRP_CLIENT_MAX_SERVICES", 5)
+    # Thread-specific Matter/CHIP sdkconfig options.
+    # The base OpenThread sdkconfig (IEEE802154, OPENTHREAD_ENABLED, etc.) is
+    # handled by the openthread component. These options are CHIP-specific and
+    # only needed when the openthread component is in Matter-managed mode.
+    if "openthread" in CORE.loaded_integrations:
         # Disable WiFi in CHIP for Thread-only mode.
         # CHIP's ConnectivityManagerImpl requires WiFi and Thread endpoint IDs
         # to be different. Setting WiFi endpoint to 0xFFFE avoids the conflict.
@@ -199,8 +193,6 @@ def _set_matter_sdkconfig(config):
         add_idf_sdkconfig_option("CONFIG_ENABLE_WIFI_AP", False)
         # Thread network commissioning endpoint must match the root node (endpoint 0)
         # where esp_matter places the NetworkCommissioning cluster.
-        # CHIP's GenericThreadDriver registers on this endpoint ID, so if it
-        # doesn't match the cluster's endpoint, attribute reads will fail.
         add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_ENDPOINT_ID", 0)
         add_idf_sdkconfig_option("CONFIG_WIFI_NETWORK_ENDPOINT_ID", 0xFFFE)
         # Tell esp_matter to initialize Thread stack during esp_matter::start()
@@ -231,12 +223,12 @@ async def to_code(config):
 
     cg.add_define("USE_MATTER")
 
-    # For Thread mode (no WiFi), esp_matter's connectedhomeip pulls in
-    # OpenThread when CONFIG_OPENTHREAD_ENABLED=y. VFS select is needed
-    # for OpenThread's eventfd-based event loop.
-    if "wifi" not in CORE.loaded_integrations:
-        cg.add_define("USE_MATTER_THREAD")
-        require_vfs_select()
+    is_thread_mode = "openthread" in CORE.loaded_integrations
+
+    if is_thread_mode:
+        # Thread mode: the openthread component handles platform setup
+        # (sdkconfig, set_openthread_platform_config). We just need the
+        # PlatformIO build workaround for OpenThread timestamp quoting.
         _patch_openthread_build_datetime()
 
     # connectedhomeip headers require CHIP_HAVE_CONFIG_H to properly include
@@ -276,7 +268,7 @@ async def to_code(config):
     # fails to properly quote the default (date string with spaces).
     # Using a simple string avoids the quoting issue entirely.
     thread_cmake = ""
-    if "wifi" not in CORE.loaded_integrations:
+    if is_thread_mode:
         thread_cmake = 'set(OT_BUILD_TIMESTAMP "esphome")\n'
     cmake_content = (
         f'cmake_minimum_required(VERSION 3.16.0)\n'

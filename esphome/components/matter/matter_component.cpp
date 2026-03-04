@@ -25,11 +25,9 @@
 #include <mdns.h>
 #endif
 
-#ifdef USE_MATTER_THREAD
-#include <esp_event.h>
-#include <esp_openthread_types.h>
-#include <platform/ESP32/OpenthreadLauncher.h>
-#endif
+// Thread mode: OpenThread platform setup (set_openthread_platform_config) is
+// handled by the openthread component's setup() when dataset_source: matter.
+// Matter only needs to call esp_matter::start() which uses that config internally.
 
 static const char *const TAG = "matter";
 
@@ -81,33 +79,10 @@ void MatterComponent::setup() {
   }
 #endif
 
-#ifdef USE_MATTER_THREAD
-  // Thread mode: configure the OpenThread platform for CHIP's ThreadStackManager.
-  // CHIP's ThreadStackManagerImpl::_InitThreadStack() calls openthread_init_stack()
-  // which requires set_openthread_platform_config() to have been called first.
-  // CHIP handles all OpenThread initialization (esp_openthread_init, netif, mainloop)
-  // and Thread credential provisioning during Matter commissioning.
-  // For Thread, mDNS is not used - CHIP uses SRP/DNS-SD via the border router.
-  {
-    esp_event_loop_create_default();  // required before OpenThread init
-    esp_openthread_platform_config_t ot_config = {
-        .radio_config =
-            {
-                .radio_mode = RADIO_MODE_NATIVE,
-                .radio_uart_config = {},
-            },
-        .host_config = {},
-        .port_config =
-            {
-                .storage_partition_name = "nvs",
-                .netif_queue_size = 10,
-                .task_queue_size = 10,
-            },
-    };
-    set_openthread_platform_config(&ot_config);
-    ESP_LOGI(TAG, "Thread mode: configured OpenThread platform for CHIP");
-  }
-#endif
+  // In Thread mode, the openthread component's setup() has already called
+  // set_openthread_platform_config() before we get here (it runs at WIFI priority,
+  // we run at AFTER_WIFI - 1). CHIP's esp_matter::start() will use that config
+  // to initialize the OpenThread stack internally.
 
   // Create the Matter node (root node on endpoint 0)
   esp_matter::node::config_t node_config;
