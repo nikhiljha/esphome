@@ -1,3 +1,5 @@
+import os
+
 import esphome.codegen as cg
 from esphome.components.esp32 import (
     VARIANT_ESP32,
@@ -9,7 +11,9 @@ from esphome.components.esp32 import (
     VARIANT_ESP32S3,
     add_idf_component,
     add_idf_sdkconfig_option,
+    include_builtin_idf_component,
     only_on_variant,
+    require_vfs_select,
 )
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
@@ -31,6 +35,36 @@ CONF_PRODUCT_NAME = "product_name"
 
 matter_ns = cg.esphome_ns.namespace("matter")
 MatterComponent = matter_ns.class_("MatterComponent", cg.Component, cg.Controller)
+
+
+def _patch_openthread_build_datetime():
+    """Patch ESP-IDF's OpenThread CMakeLists.txt to fix PlatformIO quoting bug.
+
+    PlatformIO fails to properly quote the OPENTHREAD_BUILD_DATETIME macro
+    when it contains spaces (e.g., " 2026-03-04 06:52:00 UTC"), causing a
+    compile error in instance_api.cpp. We patch the timestamp format to use
+    ISO 8601 compact format without spaces.
+    """
+    idf_path = os.environ.get("IDF_PATH")
+    if idf_path is None:
+        # Try PlatformIO's framework path
+        pio_packages = os.path.expanduser("~/.platformio/packages")
+        idf_path = os.path.join(pio_packages, "framework-espidf")
+
+    ot_cmake = os.path.join(idf_path, "components", "openthread", "CMakeLists.txt")
+    if not os.path.exists(ot_cmake):
+        return
+
+    with open(ot_cmake, "r") as f:
+        content = f.read()
+
+    old = 'string(TIMESTAMP OT_BUILD_TIMESTAMP " %Y-%m-%d %H:%M:%S UTC" UTC)'
+    new = 'string(TIMESTAMP OT_BUILD_TIMESTAMP "%Y%m%dT%H%M%SZ" UTC)'
+
+    if old in content:
+        content = content.replace(old, new)
+        with open(ot_cmake, "w") as f:
+            f.write(content)
 
 
 def _validate_passcode(value):
@@ -92,8 +126,10 @@ def _set_matter_sdkconfig(config):
     add_idf_sdkconfig_option("CONFIG_CHIP_ENABLE_PAIRING_AUTOSTART", True)
 
     # Verbose CHIP logging to debug commissioning issues
-    # DETAIL level shows PASE, DAC validation, BLE events, and network commissioning steps
-    add_idf_sdkconfig_option("CONFIG_LOG_DEFAULT_LEVEL", 4)  # ESP_LOG_DEBUG
+    # Keep global ESP-IDF log at INFO to avoid overwhelming early init,
+    # but set CHIP/Matter-specific logging to Detail for commissioning diagnostics
+    add_idf_sdkconfig_option("CONFIG_LOG_DEFAULT_LEVEL", 3)  # ESP_LOG_INFO (default)
+    add_idf_sdkconfig_option("CONFIG_LOG_MAXIMUM_LEVEL", 4)  # Allow up to DEBUG
     add_idf_sdkconfig_option("CONFIG_CHIP_LOG_FILTERING", False)
     add_idf_sdkconfig_option("CONFIG_MATTER_LOG_LEVEL", 4)  # Detail
 
@@ -131,6 +167,29 @@ def _set_matter_sdkconfig(config):
     # Matter OTA requestor
     add_idf_sdkconfig_option("CONFIG_ENABLE_OTA_REQUESTOR", True)
 
+    # If WiFi is not loaded, enable OpenThread for Matter over Thread.
+    # The Matter/CHIP stack handles Thread initialization and credential
+    # provisioning during commissioning — no pre-configured Thread dataset needed.
+    if "wifi" not in CORE.loaded_integrations:
+        # OpenThread radio and stack
+        add_idf_sdkconfig_option("CONFIG_IEEE802154_ENABLED", True)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_ENABLED", True)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_FTD", True)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_RADIO_NATIVE", True)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_CLI", False)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_CONSOLE_ENABLE", False)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_DIAG", False)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_DNS64_CLIENT", True)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_SRP_CLIENT", True)
+        add_idf_sdkconfig_option("CONFIG_OPENTHREAD_SRP_CLIENT_MAX_SERVICES", 5)
+        # Disable WiFi in CHIP for Thread-only mode.
+        # CHIP's ConnectivityManagerImpl requires WiFi and Thread endpoint IDs
+        # to be different. Setting WiFi endpoint to 0xFFFE avoids the conflict.
+        add_idf_sdkconfig_option("CONFIG_ENABLE_WIFI_STATION", False)
+        add_idf_sdkconfig_option("CONFIG_ENABLE_WIFI_AP", False)
+        add_idf_sdkconfig_option("CONFIG_WIFI_NETWORK_ENDPOINT_ID", 0xFFFE)
+        add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_ENDPOINT_ID", 1)
+
 
 @coroutine_with_priority(40.0)
 async def to_code(config):
@@ -141,6 +200,14 @@ async def to_code(config):
     CORE.register_controller()
 
     cg.add_define("USE_MATTER")
+
+    # For Thread mode (no WiFi), esp_matter's connectedhomeip pulls in
+    # OpenThread when CONFIG_OPENTHREAD_ENABLED=y. VFS select is needed
+    # for OpenThread's eventfd-based event loop.
+    if "wifi" not in CORE.loaded_integrations:
+        cg.add_define("USE_MATTER_THREAD")
+        require_vfs_select()
+        _patch_openthread_build_datetime()
 
     # connectedhomeip headers require CHIP_HAVE_CONFIG_H to properly include
     # platform build config (SystemBuildConfig.h, CHIPDeviceBuildConfig.h).
@@ -174,8 +241,16 @@ async def to_code(config):
     # EXECUTABLE_COMPONENT_NAME to be set (defaults to "main" which doesn't
     # exist in ESPHome's build structure - ESPHome uses "src").
     cmake_path = CORE.relative_build_path("CMakeLists.txt")
+    # OT_BUILD_TIMESTAMP must be set before OpenThread's CMake runs.
+    # OpenThread only sets it if not already defined, and PlatformIO
+    # fails to properly quote the default (date string with spaces).
+    # Using a simple string avoids the quoting issue entirely.
+    thread_cmake = ""
+    if "wifi" not in CORE.loaded_integrations:
+        thread_cmake = 'set(OT_BUILD_TIMESTAMP "esphome")\n'
     cmake_content = (
         f'cmake_minimum_required(VERSION 3.16.0)\n'
+        f'{thread_cmake}'
         f'set(EXECUTABLE_COMPONENT_NAME "src")\n'
         f'include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)\n'
         f'project({CORE.name})\n'

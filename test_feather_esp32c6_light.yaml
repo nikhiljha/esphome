@@ -11,9 +11,10 @@ esp32:
 
 logger:
 
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+# No wifi: or openthread: needed — Matter handles Thread commissioning
+# automatically. The phone provisions Thread credentials during BLE setup.
+network:
+  enable_ipv6: true
 
 matter:
   discriminator: 3840

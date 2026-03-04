@@ -20,8 +20,17 @@
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
 
-#include <mdns.h>
 #include <nvs_flash.h>
+
+#ifdef USE_WIFI
+#include <mdns.h>
+#endif
+
+#ifdef USE_MATTER_THREAD
+#include <esp_event.h>
+#include <esp_netif.h>
+#include <esp_vfs_eventfd.h>
+#endif
 
 static const char *const TAG = "matter";
 
@@ -60,7 +69,8 @@ void MatterComponent::setup() {
     return;
   }
 
-  // Initialize ESP-IDF mDNS for the CHIP stack.
+#ifdef USE_WIFI
+  // Initialize ESP-IDF mDNS for the CHIP stack (WiFi mode only).
   // ESPHome's mDNS component is skipped (USE_MATTER guard in mdns_esp32.cpp)
   // because CHIP manages its own mDNS service registrations. But CHIP's
   // platform layer expects the ESP-IDF mdns service to be initialized.
@@ -70,6 +80,20 @@ void MatterComponent::setup() {
   } else {
     mdns_hostname_set(App.get_name().c_str());
   }
+#endif
+
+#ifdef USE_MATTER_THREAD
+  // Thread mode: initialize event loop, netif, and eventfd for OpenThread.
+  // The CHIP/Matter stack handles OpenThread initialization and Thread
+  // credential provisioning during commissioning. We just need the
+  // underlying system services ready.
+  // For Thread, mDNS is not used - CHIP uses SRP/DNS-SD via the border router.
+  esp_event_loop_create_default();  // may already exist, that's OK
+  esp_netif_init();
+  esp_vfs_eventfd_config_t eventfd_config = {.max_fds = 3};
+  esp_vfs_eventfd_register(&eventfd_config);
+  ESP_LOGI(TAG, "Thread mode: initialized event loop, netif, eventfd");
+#endif
 
   // Erase ALL stale CHIP data from NVS before starting the stack.
   // Previous flashes may have stored SPAKE2+ verifiers, salts, fabric info,
