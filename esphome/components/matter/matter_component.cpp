@@ -435,6 +435,7 @@ uint16_t MatterComponent::create_mode_select_endpoint_(const std::string &name,
   // Set the description for the mode select
   strncpy(ms_config.mode_select.mode_select_description, name.c_str(),
           sizeof(ms_config.mode_select.mode_select_description) - 1);
+  ms_config.mode_select.mode_select_description[sizeof(ms_config.mode_select.mode_select_description) - 1] = '\0';
   ms_config.mode_select.current_mode = 0;
 
   esp_matter::endpoint_t *ep =

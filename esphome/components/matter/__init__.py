@@ -11,6 +11,7 @@ from esphome.components.esp32 import (
     VARIANT_ESP32S3,
     add_idf_component,
     add_idf_sdkconfig_option,
+    get_esp32_variant,
     include_builtin_idf_component,
     only_on_variant,
     require_vfs_select,
@@ -92,6 +93,24 @@ def _validate_passcode(value):
     return value
 
 
+# Variants with 802.15.4 radio that support Thread
+_THREAD_VARIANTS = {VARIANT_ESP32C5, VARIANT_ESP32C6, VARIANT_ESP32H2}
+
+
+def _validate_matter_config(config):
+    """Validate that Thread mode is only used on variants with 802.15.4 radio."""
+    if "wifi" not in CORE.loaded_integrations:
+        variant = get_esp32_variant()
+        if variant not in _THREAD_VARIANTS:
+            raise cv.Invalid(
+                f"Matter over Thread requires an ESP32 variant with 802.15.4 radio "
+                f"(ESP32-C5, ESP32-C6, or ESP32-H2), but this device uses {variant}. "
+                f"Either add a 'wifi:' section for Matter over WiFi, or use a "
+                f"Thread-capable variant."
+            )
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -116,6 +135,7 @@ CONFIG_SCHEMA = cv.All(
             VARIANT_ESP32S3,
         ]
     ),
+    _validate_matter_config,
 )
 
 
