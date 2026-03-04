@@ -202,6 +202,13 @@ def _set_matter_sdkconfig(config):
         # Enable Thread network commissioning driver so CHIP can provision
         # Thread credentials during Matter commissioning.
         add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_COMMISSIONING_DRIVER", True)
+        # Disable minimal mDNS (UDP multicast) for Thread mode.
+        # Minimal mDNS requires network interfaces to broadcast on, but Thread
+        # devices have no IP interface until they join the Thread network.
+        # With this disabled, CHIP uses the platform DNS-SD implementation
+        # (DnssdImpl.cpp) which dispatches to OpenThread's SRP client for
+        # service registration through the Thread Border Router.
+        add_idf_sdkconfig_option("CONFIG_USE_MINIMAL_MDNS", False)
 
 
 @coroutine_with_priority(40.0)
