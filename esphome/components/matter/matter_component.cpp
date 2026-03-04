@@ -514,7 +514,8 @@ void MatterComponent::on_sensor_update(sensor::Sensor *obj) {
   switch (type_it->second) {
     case EndpointType::TEMPERATURE_SENSOR: {
       // Matter uses temperature in 0.01 degrees Celsius
-      int16_t temp_val = static_cast<int16_t>(obj->state * 100);
+      float scaled = obj->state * 100.0f;
+      int16_t temp_val = static_cast<int16_t>(std::max(-32768.0f, std::min(32767.0f, scaled)));
       esp_matter_attr_val_t val = esp_matter_nullable_int16(temp_val);
       esp_matter::attribute::update(ep_id, TemperatureMeasurement::Id,
                                     TemperatureMeasurement::Attributes::MeasuredValue::Id, &val);
