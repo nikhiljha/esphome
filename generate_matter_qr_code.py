@@ -21,7 +21,7 @@ import sys
 BASE38_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-."
 
 
-def base38_encode(value: int, char_count: int) -> str:
+def base38_encode_chunk(value: int, char_count: int) -> str:
     """Encode an integer into base38 string of exactly char_count characters."""
     result = []
     for _ in range(char_count):
@@ -30,27 +30,29 @@ def base38_encode(value: int, char_count: int) -> str:
     return "".join(result)
 
 
-def encode_bits_to_base38(bits: int, bit_length: int) -> str:
-    """Encode a bit string to base38, processing in chunks of 3 characters (for 16 bits)."""
+def base38_encode_bytes(data: bytes) -> str:
+    """Encode bytes to base38, processing in chunks of 3 bytes.
+
+    Per Matter spec:
+    - 3 bytes -> 5 base38 chars
+    - 2 bytes -> 4 base38 chars
+    - 1 byte  -> 2 base38 chars
+    """
     result = []
-    offset = 0
-    while offset < bit_length:
-        remaining = bit_length - offset
-        if remaining >= 16:
-            # Extract 16 bits, encode as 3 base38 chars
-            chunk = (bits >> offset) & 0xFFFF
-            result.append(base38_encode(chunk, 3))
-            offset += 16
-        elif remaining >= 8:
-            # Extract 8 bits, encode as 2 base38 chars
-            chunk = (bits >> offset) & 0xFF
-            result.append(base38_encode(chunk, 2))
-            offset += 8
+    i = 0
+    while i < len(data):
+        remaining = len(data) - i
+        if remaining >= 3:
+            value = data[i] | (data[i + 1] << 8) | (data[i + 2] << 16)
+            result.append(base38_encode_chunk(value, 5))
+            i += 3
+        elif remaining == 2:
+            value = data[i] | (data[i + 1] << 8)
+            result.append(base38_encode_chunk(value, 4))
+            i += 2
         else:
-            # Extract remaining bits
-            chunk = (bits >> offset) & ((1 << remaining) - 1)
-            result.append(base38_encode(chunk, 2))
-            offset += remaining
+            result.append(base38_encode_chunk(data[i], 2))
+            i += 1
     return "".join(result)
 
 
@@ -65,7 +67,7 @@ def generate_qr_payload(
 ) -> str:
     """Generate Matter QR code payload string (MT:... format).
 
-    The payload is a bit-packed structure:
+    The payload is a bit-packed structure (LSB first):
     - Version: 3 bits
     - Vendor ID: 16 bits
     - Product ID: 16 bits
@@ -74,7 +76,10 @@ def generate_qr_payload(
     - Discriminator: 12 bits
     - Passcode: 27 bits
     - Padding: 4 bits
-    Total: 88 bits
+    Total: 88 bits = 11 bytes
+
+    The bytes are then base38-encoded in chunks of 3 bytes -> 5 chars,
+    2 bytes -> 4 chars, 1 byte -> 2 chars.
     """
     # Validate inputs
     if not 0 <= discriminator <= 4095:
@@ -89,7 +94,7 @@ def generate_qr_payload(
     if passcode in invalid_passcodes:
         raise ValueError(f"Passcode {passcode} is not allowed by Matter spec")
 
-    # Pack bits (LSB first)
+    # Pack bits (LSB first) into an integer
     bits = 0
     offset = 0
 
@@ -126,8 +131,11 @@ def generate_qr_payload(
 
     assert offset == 88, f"Expected 88 bits, got {offset}"
 
-    # Encode to base38
-    encoded = encode_bits_to_base38(bits, 88)
+    # Convert bit integer to 11 bytes (little-endian)
+    data = bits.to_bytes(11, byteorder="little")
+
+    # Encode bytes to base38
+    encoded = base38_encode_bytes(data)
 
     return f"MT:{encoded}"
 
