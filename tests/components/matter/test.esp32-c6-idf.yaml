@@ -1,0 +1,10 @@
+substitutions:
+  led_pin: GPIO15
+
+network:
+  enable_ipv6: true
+
+openthread:
+  dataset_source: matter
+
+<<: !include common.yaml

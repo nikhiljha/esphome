@@ -98,8 +98,7 @@ void MatterComponent::setup() {
 
   // Use the example DAC provider for development
   // In production, this should be replaced with proper device attestation credentials
-  chip::Credentials::SetDeviceAttestationCredentialsProvider(
-      chip::Credentials::Examples::GetExampleDACProvider());
+  chip::Credentials::SetDeviceAttestationCredentialsProvider(chip::Credentials::Examples::GetExampleDACProvider());
 
   // Start the Matter stack
   err = esp_matter::start(event_cb_);
@@ -259,8 +258,7 @@ void MatterComponent::create_endpoints_() {
       ep_id = this->create_pm25_sensor_endpoint_(sensor_entity->get_name().c_str());
     } else {
       // Skip sensors without a mappable device class
-      ESP_LOGD(TAG, "Skipping sensor '%s' (no Matter mapping for device_class)",
-               sensor_entity->get_name().c_str());
+      ESP_LOGD(TAG, "Skipping sensor '%s' (no Matter mapping for device_class)", sensor_entity->get_name().c_str());
       continue;
     }
 
@@ -316,8 +314,8 @@ uint16_t MatterComponent::create_fan_endpoint_(const std::string &name) {
 
 uint16_t MatterComponent::create_on_off_endpoint_(const std::string &name) {
   esp_matter::endpoint::on_off_plugin_unit::config_t on_off_config;
-  esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::on_off_plugin_unit::create(this->node_, &on_off_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint_t *ep = esp_matter::endpoint::on_off_plugin_unit::create(
+      this->node_, &on_off_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create on/off endpoint for '%s'", name.c_str());
     return 0;
@@ -329,8 +327,8 @@ uint16_t MatterComponent::create_on_off_endpoint_(const std::string &name) {
 
 uint16_t MatterComponent::create_contact_sensor_endpoint_(const std::string &name) {
   esp_matter::endpoint::contact_sensor::config_t contact_config;
-  esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::contact_sensor::create(this->node_, &contact_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint_t *ep = esp_matter::endpoint::contact_sensor::create(this->node_, &contact_config,
+                                                                            esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create contact sensor endpoint for '%s'", name.c_str());
     return 0;
@@ -342,8 +340,8 @@ uint16_t MatterComponent::create_contact_sensor_endpoint_(const std::string &nam
 
 uint16_t MatterComponent::create_temperature_sensor_endpoint_(const std::string &name) {
   esp_matter::endpoint::temperature_sensor::config_t temp_config;
-  esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::temperature_sensor::create(this->node_, &temp_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint_t *ep = esp_matter::endpoint::temperature_sensor::create(
+      this->node_, &temp_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create temperature sensor endpoint for '%s'", name.c_str());
     return 0;
@@ -355,8 +353,8 @@ uint16_t MatterComponent::create_temperature_sensor_endpoint_(const std::string 
 
 uint16_t MatterComponent::create_humidity_sensor_endpoint_(const std::string &name) {
   esp_matter::endpoint::humidity_sensor::config_t humidity_config;
-  esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::humidity_sensor::create(this->node_, &humidity_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint_t *ep = esp_matter::endpoint::humidity_sensor::create(this->node_, &humidity_config,
+                                                                             esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create humidity sensor endpoint for '%s'", name.c_str());
     return 0;
@@ -369,16 +367,16 @@ uint16_t MatterComponent::create_humidity_sensor_endpoint_(const std::string &na
 uint16_t MatterComponent::create_pm25_sensor_endpoint_(const std::string &name) {
   // Create an air quality sensor endpoint
   esp_matter::endpoint::air_quality_sensor::config_t aq_config;
-  esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::air_quality_sensor::create(this->node_, &aq_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint_t *ep = esp_matter::endpoint::air_quality_sensor::create(
+      this->node_, &aq_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create air quality sensor endpoint for '%s'", name.c_str());
     return 0;
   }
 
   // Add PM2.5 Concentration Measurement cluster (0x042A) to the endpoint
-  esp_matter::cluster_t *pm25_cluster = esp_matter::cluster::create(
-      ep, Pm25ConcentrationMeasurement::Id, esp_matter::CLUSTER_FLAG_SERVER);
+  esp_matter::cluster_t *pm25_cluster =
+      esp_matter::cluster::create(ep, Pm25ConcentrationMeasurement::Id, esp_matter::CLUSTER_FLAG_SERVER);
   if (pm25_cluster != nullptr) {
     // MeasuredValue attribute (nullable float - stored as nullable single in Matter)
     esp_matter_attr_val_t measured_val = esp_matter_nullable_float(0.0f);
@@ -394,7 +392,7 @@ uint16_t MatterComponent::create_pm25_sensor_endpoint_(const std::string &name) 
                                   esp_matter::ATTRIBUTE_FLAG_NULLABLE, max_val);
     // MeasurementUnit attribute (0x00000008) - Matter MeasurementUnitEnum:
     //   PPM=0, PPB=1, PPT=2, MGM3=3, UGM3=4, BQM3=5, NGPM3=6
-    esp_matter_attr_val_t unit_val = esp_matter_enum8(4);  // UGM3 (µg/m³) for PM2.5
+    esp_matter_attr_val_t unit_val = esp_matter_enum8(4);    // UGM3 (µg/m³) for PM2.5
     esp_matter::attribute::create(pm25_cluster, 0x00000008,  // MeasurementUnit
                                   esp_matter::ATTRIBUTE_FLAG_NONE, unit_val);
   }
@@ -405,7 +403,7 @@ uint16_t MatterComponent::create_pm25_sensor_endpoint_(const std::string &name) 
 }
 
 uint16_t MatterComponent::create_mode_select_endpoint_(const std::string &name,
-                                                        const std::vector<std::string> &options) {
+                                                       const std::vector<std::string> &options) {
   esp_matter::endpoint::mode_select_device::config_t ms_config;
   // Set the description for the mode select
   strncpy(ms_config.mode_select.mode_select_description, name.c_str(),
@@ -413,8 +411,8 @@ uint16_t MatterComponent::create_mode_select_endpoint_(const std::string &name,
   ms_config.mode_select.mode_select_description[sizeof(ms_config.mode_select.mode_select_description) - 1] = '\0';
   ms_config.mode_select.current_mode = 0;
 
-  esp_matter::endpoint_t *ep =
-      esp_matter::endpoint::mode_select_device::create(this->node_, &ms_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
+  esp_matter::endpoint_t *ep = esp_matter::endpoint::mode_select_device::create(
+      this->node_, &ms_config, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
   if (ep == nullptr) {
     ESP_LOGE(TAG, "Failed to create mode select endpoint for '%s'", name.c_str());
     return 0;
@@ -596,8 +594,8 @@ void MatterComponent::on_number_update(number::Number *obj) {
 // ---- Matter SDK callbacks ----
 
 esp_err_t MatterComponent::attribute_update_cb_(esp_matter::attribute::callback_type_t type, uint16_t endpoint_id,
-                                                uint32_t cluster_id, uint32_t attribute_id,
-                                                esp_matter_attr_val_t *val, void *priv_data) {
+                                                uint32_t cluster_id, uint32_t attribute_id, esp_matter_attr_val_t *val,
+                                                void *priv_data) {
   if (global_matter == nullptr)
     return ESP_OK;
 
@@ -634,8 +632,7 @@ void MatterComponent::event_cb_(const ChipDeviceEvent *event, intptr_t arg) {
         auto &commissionMgr = chip::Server::GetInstance().GetCommissioningWindowManager();
         if (!commissionMgr.IsCommissioningWindowOpen()) {
           constexpr auto kTimeout = chip::System::Clock::Seconds16(300);
-          commissionMgr.OpenBasicCommissioningWindow(kTimeout,
-                                                     chip::CommissioningWindowAdvertisement::kDnssdOnly);
+          commissionMgr.OpenBasicCommissioningWindow(kTimeout, chip::CommissioningWindowAdvertisement::kDnssdOnly);
         }
       }
       break;
@@ -650,8 +647,8 @@ void MatterComponent::event_cb_(const ChipDeviceEvent *event, intptr_t arg) {
 
 // ---- Matter attribute write -> ESPHome entity command ----
 
-esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32_t cluster_id,
-                                                    uint32_t attribute_id, esp_matter_attr_val_t *val) {
+esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id,
+                                                    esp_matter_attr_val_t *val) {
   auto entity_it = this->endpoint_entity_map_.find(endpoint_id);
   if (entity_it == this->endpoint_entity_map_.end())
     return ESP_OK;
@@ -671,8 +668,7 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
           call.set_state(new_state);
           call.perform();
         });
-      } else if (cluster_id == FanControl::Id &&
-                 attribute_id == FanControl::Attributes::PercentSetting::Id) {
+      } else if (cluster_id == FanControl::Id && attribute_id == FanControl::Attributes::PercentSetting::Id) {
         int speed_count = fan_entity->get_traits().supported_speed_count();
         uint8_t percent = val->val.u8;
         if (speed_count > 0) {

@@ -1,0 +1,11 @@
+matter:
+  discriminator: 3840
+  passcode: 20202021
+  vendor_id: 0xFFF1
+  product_id: 0x8000
+  product_name: "Matter Test Light"
+
+switch:
+  - platform: gpio
+    name: "Test LED"
+    pin: ${led_pin}

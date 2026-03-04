@@ -57,7 +57,7 @@ def _patch_openthread_build_datetime():
     if not os.path.exists(ot_cmake):
         return
 
-    with open(ot_cmake, "r") as f:
+    with open(ot_cmake) as f:
         content = f.read()
 
     old = 'string(TIMESTAMP OT_BUILD_TIMESTAMP " %Y-%m-%d %H:%M:%S UTC" UTC)'
@@ -289,11 +289,11 @@ async def to_code(config):
     # so pre-writing it here ensures our version with REQUIRES is used.
     src_cmake_path = CORE.relative_src_path("CMakeLists.txt")
     src_cmake_content = (
-        f'FILE(GLOB_RECURSE app_sources ${{CMAKE_SOURCE_DIR}}/src/*.*)\n'
-        f'idf_component_register(\n'
-        f'    SRCS ${{app_sources}}\n'
-        f'    PRIV_REQUIRES espressif__esp_matter\n'
-        f')\n'
+        "FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)\n"
+        "idf_component_register(\n"
+        "    SRCS ${app_sources}\n"
+        "    PRIV_REQUIRES espressif__esp_matter\n"
+        ")\n"
     )
     write_file_if_changed(src_cmake_path, src_cmake_content)
 

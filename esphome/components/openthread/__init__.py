@@ -265,13 +265,16 @@ async def to_code(config):
     if (poll_period := config.get(CONF_POLL_PERIOD)) is not None:
         cg.add(ot.set_poll_period(poll_period))
 
-    if not is_matter_managed:
+    if (
+        (not is_matter_managed)
+        and (CONF_SRP_ID in config)
+        and (CONF_MDNS_ID in config)
+    ):
         # SRP component only needed in static mode — CHIP handles SRP in Matter mode
-        if CONF_SRP_ID in config and CONF_MDNS_ID in config:
-            srp = cg.new_Pvariable(config[CONF_SRP_ID])
-            mdns_component = await cg.get_variable(config[CONF_MDNS_ID])
-            cg.add(srp.set_mdns(mdns_component))
-            await cg.register_component(srp, config)
+        srp = cg.new_Pvariable(config[CONF_SRP_ID])
+        mdns_component = await cg.get_variable(config[CONF_MDNS_ID])
+        cg.add(srp.set_mdns(mdns_component))
+        await cg.register_component(srp, config)
 
     if (output_power := config.get(CONF_OUTPUT_POWER)) is not None:
         cg.add(ot.set_output_power(output_power))
