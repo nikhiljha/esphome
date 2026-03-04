@@ -71,6 +71,31 @@ void MatterComponent::setup() {
     mdns_hostname_set(App.get_name().c_str());
   }
 
+  // Pre-write commissioning data (discriminator + passcode) to NVS BEFORE
+  // starting the CHIP stack. esp_matter::start() reads these during init to
+  // configure BLE advertising and the SPAKE2+ verifier for PASE. If we set
+  // them after start, the first BLE advertisement goes out with stale defaults
+  // (discriminator=3840, passcode=20202021) causing PASE failures.
+  {
+    nvs_handle_t chip_nvs;
+    err = nvs_open("chip-factory", NVS_READWRITE, &chip_nvs);
+    if (err == ESP_OK) {
+      nvs_set_u16(chip_nvs, "discriminator", this->discriminator_);
+      // The passcode is stored under "iteration-count", "salt", and "verifier"
+      // for SPAKE2+. Writing the raw passcode lets CHIP recompute the verifier.
+      // Erase any stale SPAKE2+ data so CHIP regenerates from the new passcode.
+      nvs_erase_key(chip_nvs, "verifier");
+      nvs_erase_key(chip_nvs, "salt");
+      nvs_set_u32(chip_nvs, "pin-code", this->passcode_);
+      nvs_commit(chip_nvs);
+      nvs_close(chip_nvs);
+      ESP_LOGI(TAG, "Wrote commissioning data to NVS: discriminator=%u, passcode=%" PRIu32,
+               this->discriminator_, this->passcode_);
+    } else {
+      ESP_LOGW(TAG, "Failed to open chip-factory NVS: %s", esp_err_to_name(err));
+    }
+  }
+
   // Create the Matter node (root node on endpoint 0)
   esp_matter::node::config_t node_config;
   this->node_ = esp_matter::node::create(&node_config, attribute_update_cb_, identification_cb_);
@@ -98,10 +123,7 @@ void MatterComponent::setup() {
 
   this->matter_started_ = true;
 
-  // Configure discriminator and passcode in the Matter stack.
-  // These must be set after esp_matter::start() since the stack initializes
-  // ConfigurationMgr during start.
-  // Configure discriminator and passcode via the CommissionableDataProvider
+  // Also set via the CommissionableDataProvider API (updates in-memory state)
   chip::DeviceLayer::GetCommissionableDataProvider()->SetSetupDiscriminator(this->discriminator_);
   chip::DeviceLayer::GetCommissionableDataProvider()->SetSetupPasscode(this->passcode_);
 
