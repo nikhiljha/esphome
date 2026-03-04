@@ -199,8 +199,8 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(OpenThreadComponent),
-            cv.Optional(CONF_SRP_ID): cv.declare_id(OpenThreadSrpComponent),
-            cv.Optional(CONF_MDNS_ID): cv.use_id(MDNSComponent),
+            cv.GenerateID(CONF_SRP_ID): cv.declare_id(OpenThreadSrpComponent),
+            cv.GenerateID(CONF_MDNS_ID): cv.use_id(MDNSComponent),
             cv.Optional(CONF_DATASET_SOURCE, default="static"): cv.one_of(
                 "static", "matter", lower=True
             ),
