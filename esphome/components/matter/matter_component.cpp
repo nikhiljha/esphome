@@ -8,7 +8,6 @@
 
 #include <esp_matter.h>
 #include <esp_matter_endpoint.h>
-#include <esp_matter_ota.h>
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -110,25 +109,6 @@ void MatterComponent::setup() {
   }
 #endif
 
-  // Erase ALL stale CHIP data from NVS before starting the stack.
-  // Previous flashes may have stored SPAKE2+ verifiers, salts, fabric info,
-  // or discriminator values that conflict with the current config.
-  // This ensures the CHIP stack starts completely fresh every boot.
-  // TODO: In production, only erase on first boot or config change.
-  {
-    nvs_handle_t chip_nvs;
-    const char *namespaces[] = {"chip-factory", "chip-config", "chip-counters"};
-    for (const auto *ns : namespaces) {
-      err = nvs_open(ns, NVS_READWRITE, &chip_nvs);
-      if (err == ESP_OK) {
-        nvs_erase_all(chip_nvs);
-        nvs_commit(chip_nvs);
-        nvs_close(chip_nvs);
-        ESP_LOGI(TAG, "Erased NVS namespace: %s", ns);
-      }
-    }
-  }
-
   // Create the Matter node (root node on endpoint 0)
   esp_matter::node::config_t node_config;
   this->node_ = esp_matter::node::create(&node_config, attribute_update_cb_, identification_cb_);
@@ -162,12 +142,6 @@ void MatterComponent::setup() {
 
   // Generate and log the QR code setup payload for pairing
   this->log_qr_code_();
-
-  // Initialize OTA requestor
-  err = esp_matter_ota_requestor_init();
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "OTA requestor init failed: %s (non-fatal)", esp_err_to_name(err));
-  }
 
   ESP_LOGI(TAG, "Matter started successfully");
 }
@@ -443,8 +417,9 @@ uint16_t MatterComponent::create_pm25_sensor_endpoint_(const std::string &name) 
     esp_matter_attr_val_t max_val = esp_matter_nullable_float(1000.0f);
     esp_matter::attribute::create(pm25_cluster, 0x00000002,  // MaxMeasuredValue
                                   esp_matter::ATTRIBUTE_FLAG_NULLABLE, max_val);
-    // MeasurementUnit attribute (0x00000008) - µg/m³ = 0 (PPM=0, PPB=1, PPT=2, MG_M3=4, UG_M3=5)
-    esp_matter_attr_val_t unit_val = esp_matter_enum8(0);  // PPM as default (closest standard)
+    // MeasurementUnit attribute (0x00000008) - Matter MeasurementUnitEnum:
+    //   PPM=0, PPB=1, PPT=2, MGM3=3, UGM3=4, BQM3=5, NGPM3=6
+    esp_matter_attr_val_t unit_val = esp_matter_enum8(4);  // UGM3 (µg/m³) for PM2.5
     esp_matter::attribute::create(pm25_cluster, 0x00000008,  // MeasurementUnit
                                   esp_matter::ATTRIBUTE_FLAG_NONE, unit_val);
   }

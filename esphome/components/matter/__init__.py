@@ -125,13 +125,6 @@ def _set_matter_sdkconfig(config):
     add_idf_sdkconfig_option("CONFIG_CHIP_TASK_STACK_SIZE", 8192)
     add_idf_sdkconfig_option("CONFIG_CHIP_ENABLE_PAIRING_AUTOSTART", True)
 
-    # Verbose CHIP logging to debug commissioning issues
-    # Keep global ESP-IDF log at INFO to avoid overwhelming early init,
-    # but set CHIP/Matter-specific logging to Detail for commissioning diagnostics
-    add_idf_sdkconfig_option("CONFIG_LOG_DEFAULT_LEVEL", 3)  # ESP_LOG_INFO (default)
-    add_idf_sdkconfig_option("CONFIG_LOG_MAXIMUM_LEVEL", 4)  # Allow up to DEBUG
-    add_idf_sdkconfig_option("CONFIG_CHIP_LOG_FILTERING", False)
-    add_idf_sdkconfig_option("CONFIG_MATTER_LOG_LEVEL", 4)  # Detail
 
     # BLE for commissioning - BLE-only mode frees memory from Classic BT
     add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
@@ -163,9 +156,6 @@ def _set_matter_sdkconfig(config):
     add_idf_sdkconfig_option("CONFIG_LWIP_TCPIP_RECVMBOX_SIZE", 32)
     add_idf_sdkconfig_option("CONFIG_LWIP_UDP_RECVMBOX_SIZE", 32)
     add_idf_sdkconfig_option("CONFIG_LWIP_MAX_SOCKETS", 16)
-
-    # Matter OTA requestor
-    add_idf_sdkconfig_option("CONFIG_ENABLE_OTA_REQUESTOR", True)
 
     # If WiFi is not loaded, enable OpenThread for Matter over Thread.
     # The Matter/CHIP stack handles Thread initialization and credential
