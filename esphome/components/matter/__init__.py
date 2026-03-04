@@ -189,6 +189,8 @@ def _set_matter_sdkconfig(config):
         add_idf_sdkconfig_option("CONFIG_ENABLE_WIFI_AP", False)
         add_idf_sdkconfig_option("CONFIG_WIFI_NETWORK_ENDPOINT_ID", 0xFFFE)
         add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_ENDPOINT_ID", 1)
+        # Tell esp_matter to initialize Thread stack during esp_matter::start()
+        add_idf_sdkconfig_option("CONFIG_ESP_MATTER_ENABLE_OPENTHREAD", True)
 
 
 @coroutine_with_priority(40.0)

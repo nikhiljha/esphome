@@ -28,8 +28,8 @@
 
 #ifdef USE_MATTER_THREAD
 #include <esp_event.h>
-#include <esp_netif.h>
-#include <esp_vfs_eventfd.h>
+#include <esp_openthread_types.h>
+#include <platform/ESP32/OpenthreadLauncher.h>
 #endif
 
 static const char *const TAG = "matter";
@@ -83,16 +83,31 @@ void MatterComponent::setup() {
 #endif
 
 #ifdef USE_MATTER_THREAD
-  // Thread mode: initialize event loop, netif, and eventfd for OpenThread.
-  // The CHIP/Matter stack handles OpenThread initialization and Thread
-  // credential provisioning during commissioning. We just need the
-  // underlying system services ready.
+  // Thread mode: configure the OpenThread platform for CHIP's ThreadStackManager.
+  // CHIP's ThreadStackManagerImpl::_InitThreadStack() calls openthread_init_stack()
+  // which requires set_openthread_platform_config() to have been called first.
+  // CHIP handles all OpenThread initialization (esp_openthread_init, netif, mainloop)
+  // and Thread credential provisioning during Matter commissioning.
   // For Thread, mDNS is not used - CHIP uses SRP/DNS-SD via the border router.
-  esp_event_loop_create_default();  // may already exist, that's OK
-  esp_netif_init();
-  esp_vfs_eventfd_config_t eventfd_config = {.max_fds = 3};
-  esp_vfs_eventfd_register(&eventfd_config);
-  ESP_LOGI(TAG, "Thread mode: initialized event loop, netif, eventfd");
+  {
+    esp_event_loop_create_default();  // required before OpenThread init
+    esp_openthread_platform_config_t ot_config = {
+        .radio_config =
+            {
+                .radio_mode = RADIO_MODE_NATIVE,
+                .radio_uart_config = {},
+            },
+        .host_config = {},
+        .port_config =
+            {
+                .storage_partition_name = "nvs",
+                .netif_queue_size = 10,
+                .task_queue_size = 10,
+            },
+    };
+    set_openthread_platform_config(&ot_config);
+    ESP_LOGI(TAG, "Thread mode: configured OpenThread platform for CHIP");
+  }
 #endif
 
   // Erase ALL stale CHIP data from NVS before starting the stack.
