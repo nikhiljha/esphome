@@ -690,18 +690,24 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
     case EndpointType::FAN: {
       auto *fan_entity = static_cast<fan::Fan *>(entity_it->second);
       if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
-        auto call = fan_entity->make_call();
-        call.set_state(val->val.b);
-        call.perform();
+        bool new_state = val->val.b;
+        this->defer([fan_entity, new_state]() {
+          auto call = fan_entity->make_call();
+          call.set_state(new_state);
+          call.perform();
+        });
       } else if (cluster_id == FanControl::Id &&
                  attribute_id == FanControl::Attributes::PercentSetting::Id) {
-        auto call = fan_entity->make_call();
         int speed_count = fan_entity->get_traits().supported_speed_count();
+        uint8_t percent = val->val.u8;
         if (speed_count > 0) {
-          int speed = (val->val.u8 * speed_count + 99) / 100;
-          call.set_speed(speed);
+          this->defer([fan_entity, percent, speed_count]() {
+            auto call = fan_entity->make_call();
+            int speed = (percent * speed_count + 99) / 100;
+            call.set_speed(speed);
+            call.perform();
+          });
         }
-        call.perform();
       }
       break;
     }
@@ -711,11 +717,14 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
     case EndpointType::ON_OFF: {
       auto *sw = static_cast<switch_::Switch *>(entity_it->second);
       if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
-        if (val->val.b) {
-          sw->turn_on();
-        } else {
-          sw->turn_off();
-        }
+        bool new_state = val->val.b;
+        this->defer([sw, new_state]() {
+          if (new_state) {
+            sw->turn_on();
+          } else {
+            sw->turn_off();
+          }
+        });
       }
       break;
     }
@@ -733,12 +742,14 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
       auto *sel = static_cast<select::Select *>(entity_it->second);
       if (cluster_id == ModeSelect::Id && attribute_id == ModeSelect::Attributes::CurrentMode::Id) {
         uint8_t mode = val->val.u8;
-        const auto &options = sel->traits.get_options();
-        if (mode < options.size()) {
-          auto call = sel->make_call();
-          call.set_option(options[mode]);
-          call.perform();
-        }
+        this->defer([sel, mode]() {
+          const auto &options = sel->traits.get_options();
+          if (mode < options.size()) {
+            auto call = sel->make_call();
+            call.set_option(options[mode]);
+            call.perform();
+          }
+        });
       }
       break;
     }
@@ -749,22 +760,27 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
       auto *num = static_cast<number::Number *>(entity_it->second);
       if (cluster_id == LevelControl::Id && attribute_id == LevelControl::Attributes::CurrentLevel::Id) {
         // Scale from 0-254 back to number's min/max range
-        float min_val = num->traits.get_min_value();
-        float max_val = num->traits.get_max_value();
-        float range = max_val - min_val;
-        float value = min_val + (static_cast<float>(val->val.u8) / 254.0f) * range;
-        auto call = num->make_call();
-        call.set_value(value);
-        call.perform();
+        uint8_t level = val->val.u8;
+        this->defer([num, level]() {
+          float min_val = num->traits.get_min_value();
+          float max_val = num->traits.get_max_value();
+          float range = max_val - min_val;
+          float value = min_val + (static_cast<float>(level) / 254.0f) * range;
+          auto call = num->make_call();
+          call.set_value(value);
+          call.perform();
+        });
       } else if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
-        // On/Off maps to min (off) or last value (on)
-        auto call = num->make_call();
-        if (val->val.b) {
-          call.set_value(num->traits.get_max_value());
-        } else {
-          call.set_value(num->traits.get_min_value());
-        }
-        call.perform();
+        bool new_state = val->val.b;
+        this->defer([num, new_state]() {
+          auto call = num->make_call();
+          if (new_state) {
+            call.set_value(num->traits.get_max_value());
+          } else {
+            call.set_value(num->traits.get_min_value());
+          }
+          call.perform();
+        });
       }
       break;
     }
