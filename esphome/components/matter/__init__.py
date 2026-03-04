@@ -187,8 +187,12 @@ def _set_matter_sdkconfig(config):
         # to be different. Setting WiFi endpoint to 0xFFFE avoids the conflict.
         add_idf_sdkconfig_option("CONFIG_ENABLE_WIFI_STATION", False)
         add_idf_sdkconfig_option("CONFIG_ENABLE_WIFI_AP", False)
+        # Thread network commissioning endpoint must match the root node (endpoint 0)
+        # where esp_matter places the NetworkCommissioning cluster.
+        # CHIP's GenericThreadDriver registers on this endpoint ID, so if it
+        # doesn't match the cluster's endpoint, attribute reads will fail.
+        add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_ENDPOINT_ID", 0)
         add_idf_sdkconfig_option("CONFIG_WIFI_NETWORK_ENDPOINT_ID", 0xFFFE)
-        add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_ENDPOINT_ID", 1)
         # Tell esp_matter to initialize Thread stack during esp_matter::start()
         add_idf_sdkconfig_option("CONFIG_ESP_MATTER_ENABLE_OPENTHREAD", True)
         # Critical: CHIP_DEVICE_CONFIG_ENABLE_THREAD is derived from this.
