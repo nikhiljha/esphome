@@ -697,7 +697,7 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
         auto call = fan_entity->make_call();
         int speed_count = fan_entity->get_traits().supported_speed_count();
         if (speed_count > 0) {
-          int speed = (val->val.u8 * speed_count) / 100;
+          int speed = (val->val.u8 * speed_count + 99) / 100;
           call.set_speed(speed);
         }
         call.perform();
