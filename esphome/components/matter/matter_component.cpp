@@ -20,6 +20,7 @@
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
 
+#include <mdns.h>
 #include <nvs_flash.h>
 
 static const char *const TAG = "matter";
@@ -57,6 +58,17 @@ void MatterComponent::setup() {
     ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
     this->mark_failed();
     return;
+  }
+
+  // Initialize ESP-IDF mDNS for the CHIP stack.
+  // ESPHome's mDNS component is skipped (USE_MATTER guard in mdns_esp32.cpp)
+  // because CHIP manages its own mDNS service registrations. But CHIP's
+  // platform layer expects the ESP-IDF mdns service to be initialized.
+  err = mdns_init();
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "mDNS init failed: %s (may already be initialized)", esp_err_to_name(err));
+  } else {
+    mdns_hostname_set(App.get_name().c_str());
   }
 
   // Create the Matter node (root node on endpoint 0)
