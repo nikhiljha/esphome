@@ -4,6 +4,7 @@
 #include "matter_component.h"
 
 #include "esphome/core/application.h"
+#include "esphome/core/controller_registry.h"
 #include "esphome/core/log.h"
 
 #include <esp_matter.h>
@@ -50,6 +51,7 @@ float MatterComponent::get_setup_priority() const {
 
 void MatterComponent::setup() {
   global_matter = this;
+  ControllerRegistry::register_controller(this);
 
   ESP_LOGI(TAG, "Initializing Matter...");
 
