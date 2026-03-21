@@ -22,11 +22,47 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#ifdef USE_OPENTHREAD_MATTER_MANAGED
+#include <esp_openthread_types.h>
+#include <platform/ESP32/OpenthreadLauncher.h>
+#endif
+
 static const char *const TAG = "openthread";
 
 namespace esphome::openthread {
 
 void OpenThreadComponent::setup() {
+#ifdef USE_OPENTHREAD_MATTER_MANAGED
+  // In Matter-managed mode, the CHIP/Matter stack handles OpenThread initialization,
+  // the mainloop task, and Thread credential provisioning. We only need to:
+  // 1. Set up platform prerequisites (NVS, event loop)
+  // 2. Call set_openthread_platform_config() so CHIP knows the radio config
+  ESP_ERROR_CHECK(nvs_flash_init());
+  esp_err_t err = esp_event_loop_create_default();
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    ESP_ERROR_CHECK(err);  // ESP_ERR_INVALID_STATE means already created, that's fine
+  }
+
+  // Configure the OpenThread platform for CHIP's ThreadStackManager.
+  // CHIP's ThreadStackManagerImpl::_InitThreadStack() calls openthread_init_stack()
+  // which requires set_openthread_platform_config() to have been called first.
+  esp_openthread_platform_config_t ot_config = {
+      .radio_config =
+          {
+              .radio_mode = RADIO_MODE_NATIVE,
+              .radio_uart_config = {},
+          },
+      .host_config = {},
+      .port_config =
+          {
+              .storage_partition_name = "nvs",
+              .netif_queue_size = 10,
+              .task_queue_size = 10,
+          },
+  };
+  set_openthread_platform_config(&ot_config);
+  ESP_LOGI(TAG, "Matter-managed mode: configured OpenThread platform for CHIP");
+#else
   // Used eventfds:
   // * netif
   // * ot task queue
@@ -45,6 +81,7 @@ void OpenThreadComponent::setup() {
         vTaskDelete(nullptr);
       },
       "ot_main", 10240, this, 5, nullptr);
+#endif
 }
 
 static esp_netif_t *init_openthread_netif(const esp_openthread_platform_config_t *config) {

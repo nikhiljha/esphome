@@ -1,0 +1,9 @@
+network:
+  enable_ipv6: true
+
+openthread:
+  dataset_source: matter
+
+matter:
+  discriminator: 3840
+  passcode: 20202021

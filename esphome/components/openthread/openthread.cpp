@@ -99,6 +99,10 @@ void OpenThreadComponent::defer_factory_reset_external_callback() {
   this->defer([this]() { this->factory_reset_external_callback_(); });
 }
 
+// SRP component is only used in static dataset mode.
+// In Matter-managed mode, CHIP handles SRP service registration via DNS-SD.
+#ifndef USE_OPENTHREAD_MATTER_MANAGED
+
 void OpenThreadSrpComponent::srp_callback(otError err, const otSrpClientHostInfo *host_info,
                                           const otSrpClientService *services,
                                           const otSrpClientService *removed_services, void *context) {
@@ -229,9 +233,16 @@ void *OpenThreadSrpComponent::pool_alloc_(size_t size) {
 
 void OpenThreadSrpComponent::set_mdns(esphome::mdns::MDNSComponent *mdns) { this->mdns_ = mdns; }
 
+#endif  // !USE_OPENTHREAD_MATTER_MANAGED
+
 bool OpenThreadComponent::teardown() {
   if (!this->teardown_started_) {
     this->teardown_started_ = true;
+#ifdef USE_OPENTHREAD_MATTER_MANAGED
+    // In Matter-managed mode, CHIP owns the OT stack. Just mark teardown complete.
+    global_openthread_component = nullptr;
+    this->teardown_complete_ = true;
+#else
     ESP_LOGD(TAG, "Clear Srp");
     auto lock = InstanceLock::try_acquire(100);
     if (!lock) {
@@ -252,12 +263,20 @@ bool OpenThreadComponent::teardown() {
 #else
     this->teardown_complete_ = true;
 #endif
+#endif  // USE_OPENTHREAD_MATTER_MANAGED
   }
   return this->teardown_complete_;
 }
 
 void OpenThreadComponent::on_factory_reset(std::function<void()> callback) {
   factory_reset_external_callback_ = callback;
+#ifdef USE_OPENTHREAD_MATTER_MANAGED
+  // In Matter-managed mode, CHIP handles factory reset of Thread credentials.
+  // Just invoke the callback directly.
+  if (factory_reset_external_callback_) {
+    factory_reset_external_callback_();
+  }
+#else
   ESP_LOGD(TAG, "Start Removal SRP Host and Services");
   otError error;
   InstanceLock lock = InstanceLock::acquire();
@@ -269,6 +288,7 @@ void OpenThreadComponent::on_factory_reset(std::function<void()> callback) {
     return;
   }
   ESP_LOGD(TAG, "Waiting on Confirmation Removal SRP Host and Services");
+#endif
 }
 
 // set_use_address() is guaranteed to be called during component setup by Python code generation,
