@@ -25,6 +25,7 @@ class MatterComponent : public Component, public Controller {
   void set_vendor_id(uint16_t vendor_id) { this->vendor_id_ = vendor_id; }
   void set_product_id(uint16_t product_id) { this->product_id_ = product_id; }
   void set_product_name(const char *product_name) { this->product_name_ = product_name; }
+  void set_software_version(uint32_t version) { this->software_version_ = version; }
 
   /// Get the Matter node pointer (for adding endpoints externally)
   esp_matter::node_t *get_node() { return this->node_; }
@@ -112,6 +113,7 @@ class MatterComponent : public Component, public Controller {
   uint16_t vendor_id_{0xFFF1};
   uint16_t product_id_{0x8000};
   const char *product_name_{nullptr};
+  uint32_t software_version_{1};
 
   bool matter_started_{false};
 };

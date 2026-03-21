@@ -100,6 +100,16 @@ void MatterComponent::setup() {
   // In production, this should be replaced with proper device attestation credentials
   chip::Credentials::SetDeviceAttestationCredentialsProvider(chip::Credentials::Examples::GetExampleDACProvider());
 
+  // Initialize OTA Requestor clusters on root node (endpoint 0).
+  // This must be called BEFORE esp_matter::start() so the clusters
+  // are registered when the Matter stack initializes.
+  err = esp_matter_ota_requestor_init();
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "OTA Requestor cluster init failed: %s (OTA updates disabled)", esp_err_to_name(err));
+  } else {
+    ESP_LOGI(TAG, "OTA Requestor clusters added (software_version=%" PRIu32 ")", this->software_version_);
+  }
+
   // Start the Matter stack
   err = esp_matter::start(event_cb_);
   if (err != ESP_OK) {
@@ -109,6 +119,11 @@ void MatterComponent::setup() {
   }
 
   this->matter_started_ = true;
+
+  // Start the OTA Requestor logic now that the server is running.
+  // This connects the requestor to the BDX downloader, image processor,
+  // and driver so it can query OTA providers and apply updates.
+  esp_matter_ota_requestor_start();
 
   // Also set via the CommissionableDataProvider API (updates in-memory state)
   chip::DeviceLayer::GetCommissionableDataProvider()->SetSetupDiscriminator(this->discriminator_);
@@ -159,6 +174,8 @@ void MatterComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Vendor ID: 0x%04X", this->vendor_id_);
   ESP_LOGCONFIG(TAG, "  Product ID: 0x%04X", this->product_id_);
   ESP_LOGCONFIG(TAG, "  Discriminator: %u", this->discriminator_);
+  ESP_LOGCONFIG(TAG, "  Software Version: %" PRIu32, this->software_version_);
+  ESP_LOGCONFIG(TAG, "  OTA Requestor: enabled");
   if (this->product_name_ != nullptr) {
     ESP_LOGCONFIG(TAG, "  Product Name: %s", this->product_name_);
   }
