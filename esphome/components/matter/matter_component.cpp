@@ -693,7 +693,12 @@ esp_err_t MatterComponent::handle_attribute_update_(uint16_t endpoint_id, uint32
           this->defer([fan_entity, percent, speed_count]() {
             auto call = fan_entity->make_call();
             int speed = (percent * speed_count + 99) / 100;
-            call.set_speed(speed);
+            if (speed == 0) {
+              // PercentSetting=0 means "fan off" in Matter; ESPHome speeds are 1-based
+              call.set_state(false);
+            } else {
+              call.set_speed(speed);
+            }
             call.perform();
           });
         }
